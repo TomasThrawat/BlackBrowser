@@ -43,7 +43,16 @@ object AdBlocker {
         "adservice.google.fr",
         "adservice.google.ca",
         "adservice.google.com.au",
+        "adservice.google.co.jp",
+        "adservice.google.es",
+        "adservice.google.it",
+        "adservice.google.nl",
+        "adservice.google.pl",
+        "adservice.google.co.in",
+        "adservice.google.com.br",
         "app-measurement.com",
+        "analytics.google.com",
+        "2mdn.net",
 
         // Major ad exchanges / SSPs / DSPs
         "adnxs.com",
@@ -83,6 +92,27 @@ object AdBlocker {
         "freewheel.tv",
         "springserve.com",
         "onaudience.com",
+        "adcash.com",
+        "smaato.com",
+        "sonobi.com",
+        "gumgum.com",
+        "33across.com",
+        "sovrn.com",
+        "lijit.com",
+        "loopme.com",
+        "undertone.com",
+        "connatix.com",
+        "kargo.com",
+        "mediamath.com",
+        "mathtag.com",
+        "district-m.net",
+        "improvedigital.com",
+        "smartclip.net",
+        "bidr.io",
+        "turn.com",
+        "themoneytizer.com",
+        "adhese.com",
+        "serving-sys.com",
 
         // Analytics / tracking / attribution
         "scorecardresearch.com",
@@ -104,8 +134,27 @@ object AdBlocker {
         "zedo.com",
         "adjust.com",
         "appsflyer.com",
+        "hotjar.com",
+        "mixpanel.com",
+        "segment.io",
+        "segment.com",
+        "fullstory.com",
+        "mouseflow.com",
+        "clicktale.net",
+        "crazyegg.com",
+        "optimizely.com",
+        "connect.facebook.net",
+        "amplitude.com",
+        "heap.io",
+        "heapanalytics.com",
+        "kissmetrics.com",
+        "chartbeat.com",
+        "parsely.com",
+        "krxd.net",
+        "newrelic.com",
+        "nr-data.net",
 
-        // Aggressive / pop / redirect ad networks
+        // Aggressive / pop / redirect / cloaking ad networks
         "bidvertiser.com",
         "propellerads.com",
         "popads.net",
@@ -119,6 +168,18 @@ object AdBlocker {
         "clickadu.com",
         "trafficstars.com",
         "exdynsrv.com",
+        "galaksion.com",
+        "evadav.com",
+        "clickadilla.com",
+        "richads.com",
+        "zeropark.com",
+        "monetag.com",
+        "propush.me",
+        "adnium.com",
+        "trafficfactory.biz",
+        "acscdn.com",
+        "srtk.net",
+        "clickaine.com",
 
         // Mobile / in-app ad SDK endpoints (also fire inside WebView pages)
         "vungle.com",
@@ -130,6 +191,11 @@ object AdBlocker {
         "adcolony.com",
         "startapp.com",
         "mopub.com",
+        "tapjoy.com",
+        "flurry.com",
+        "pubnative.net",
+        "fyber.com",
+        "verve.com",
 
         // Social ad/tracking subdomains only (the main site itself is never blocked)
         "an.facebook.com",
@@ -148,25 +214,85 @@ object AdBlocker {
         "snap.licdn.com",
         "tr.snapchat.com",
         "ads.pinterest.com",
-        "ct.pinterest.com"
+        "ct.pinterest.com",
+        "ads.linkedin.com",
+        "ads.yahoo.com",
+        "adtech.yahooinc.com",
+        "ads.snapchat.com"
     )
 
     // Betting/gambling brand block: matched as a host substring so any mirror domain, TLD
     // variant, or subdomain of the brand is caught (e.g. 1xbet.com, 1xbet.ug, m.1xbet.ke,
-    // 1xlite-europe.com) without needing to hardcode every rotating mirror.
+    // 1xlite-europe.com) without needing to hardcode every rotating mirror. Kept to brand
+    // names specific enough that they won't collide with unrelated real words/domains.
     private val blockedHostSubstrings: List<String> = listOf(
         "1xbet",
-        "1xlite"
+        "1xlite",
+        "melbet",
+        "betwinner",
+        "mostbet",
+        "pin-up",
+        "vavada",
+        "joycasino",
+        "azino777",
+        "slotozal",
+        "playfortuna",
+        "casinox",
+        "riobet",
+        "parimatch",
+        "leonbets",
+        "1xslots"
     )
 
     // Path/query fragments, checked with slash boundaries so normal words are never matched.
     private val blockedPatterns: List<String> = listOf(
-        "/ads/", "/ad/", "/adserver/", "/adserving/", "/pagead/", "/adframe",
-        "/advert/", "/advertisement/", "/banners/", "/banner_ads/", "/popads",
-        "/popunder", "/adsystem/", "/admanager/", "/adtrack", "/adsync",
-        "/prebid", "/vast.xml", "/vast?", "/openrtb",
-        "/adchoices", "/sponsored-ads/", "/native_ads/", "/aff_click",
-        "/affiliate/click", "/click.php?", "/adserv/"
+        "/ads/",
+        "/ad/",
+        "/adserver/",
+        "/adserving/",
+        "/pagead/",
+        "/adframe",
+        "/advert/",
+        "/advertisement/",
+        "/banners/",
+        "/banner_ads/",
+        "/popads",
+        "/popunder",
+        "/adsystem/",
+        "/admanager/",
+        "/adtrack",
+        "/adsync",
+        "/prebid",
+        "/vast.xml",
+        "/vast?",
+        "/openrtb",
+        "/adchoices",
+        "/sponsored-ads/",
+        "/native_ads/",
+        "/aff_click",
+        "/affiliate/click",
+        "/click.php?",
+        "/adserv/",
+        "/adserver.php",
+        "/ad_frame",
+        "/adsbygoogle.js",
+        "/gpt.js",
+        "/pubads",
+        "/fbevents.js",
+        "/collect?",
+        "/beacon.js",
+        "/track.php",
+        "/redirect.php?",
+        "/interstitial",
+        "/adx.php",
+        "/rtb/",
+        "/adserve/",
+        "/adtracking/",
+        "/adroll",
+        "/pop.js",
+        "/popup.js",
+        "/smartlink",
+        "/ad-popup"
     )
 
     fun shouldBlock(uri: Uri): Boolean {
@@ -180,21 +306,27 @@ object AdBlocker {
 
     // Cosmetic filtering: hides leftover ad containers/iframes served from the page's own
     // domain, so ads that survive the network-level host/path block above (native ads, in-feed
-    // sponsored blocks) are still hidden. Selectors are deliberately specific (ad network names,
-    // "advert", "sponsor-", data-ad-* attributes) rather than a bare "ad" substring, which would
-    // also match unrelated words like "gradient" or "header".
+    // sponsored blocks, AMP ad slots) are still hidden. Selectors are deliberately specific
+    // (ad network names, "advert", "sponsor-", data-ad-* attributes, exact ".ad"/".ads" class
+    // tokens) rather than a bare substring, which would also match unrelated words like
+    // "gradient" or "header".
     fun cosmeticHideCss(): String = """
         .adsbygoogle, ins.adsbygoogle,
-        [data-ad], [data-ad-slot], [data-ad-client], [data-ad-format],
-        [id*="div-gpt-ad"], [class*="gpt-ad"],
+        .ad, .ads, #ad, #ads,
+        [data-ad], [data-ad-slot], [data-ad-client], [data-ad-format], [data-ad-unit],
+        [id*="div-gpt-ad"], [class*="gpt-ad"], [id*="google_ads_iframe"],
         [class*="advert"], [id*="advert"],
         [class*="sponsor-"], [id*="sponsor-"], [class*="-sponsor"],
+        [class*="native-ad"], [id*="native-ad"],
         [class*="taboola"], [id*="taboola"],
         [class*="outbrain"], [id*="outbrain"],
         [class*="mgid"], [id*="mgid"],
+        amp-ad, amp-embed[type="doubleclick"], amp-sticky-ad,
         iframe[src*="doubleclick.net"], iframe[src*="googlesyndication.com"],
         iframe[src*="googleadservices.com"], iframe[src*="amazon-adsystem.com"],
-        .ad-slot, .ad-wrapper, .ad_unit, .ad-container, .banner-ad, .banner-ads
+        iframe[src*="adnxs.com"], iframe[src*="openx.net"], iframe[src*="pubmatic.com"],
+        .ad-slot, .ad-wrapper, .ad_unit, .ad-container, .banner-ad, .banner-ads,
+        .adSlot, .dfp-ad, .dfp-slot
         { display: none !important; visibility: hidden !important; height: 0 !important; }
     """.trimIndent()
 }
