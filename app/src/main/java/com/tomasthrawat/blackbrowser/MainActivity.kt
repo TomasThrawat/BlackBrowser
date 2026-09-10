@@ -98,7 +98,7 @@ class MainActivity : AppCompatActivity() {
         val btnBack: ImageButton = findViewById(R.id.btnBack)
         val btnForward: ImageButton = findViewById(R.id.btnForward)
         val btnReload: ImageButton = findViewById(R.id.btnReload)
-        val btnSetLauncher: ImageButton = findViewById(R.id.btnSetLauncher)
+        val btnSetDefaultBrowser: ImageButton = findViewById(R.id.btnSetDefaultBrowser)
 
         webView.settings.javaScriptEnabled = true
         webView.settings.domStorageEnabled = true
@@ -149,8 +149,8 @@ class MainActivity : AppCompatActivity() {
             webView.reload()
         }
 
-        btnSetLauncher.setOnClickListener {
-            requestDefaultLauncher()
+        btnSetDefaultBrowser.setOnClickListener {
+            requestDefaultBrowser()
         }
 
         updateAdBlockIcon()
@@ -177,7 +177,13 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        webView.loadUrl(homeUrl)
+        webView.loadUrl(intent?.dataString ?: homeUrl)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        intent.dataString?.let { webView.loadUrl(it) }
     }
 
     override fun onStart() {
@@ -282,24 +288,24 @@ class MainActivity : AppCompatActivity() {
         )
     }
 
-    private fun requestDefaultLauncher() {
+    private fun requestDefaultBrowser() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             val roleManager = getSystemService(RoleManager::class.java)
             if (roleManager != null &&
-                roleManager.isRoleAvailable(RoleManager.ROLE_HOME) &&
-                !roleManager.isRoleHeld(RoleManager.ROLE_HOME)
+                roleManager.isRoleAvailable(RoleManager.ROLE_BROWSER) &&
+                !roleManager.isRoleHeld(RoleManager.ROLE_BROWSER)
             ) {
                 startActivityForResult(
-                    roleManager.createRequestRoleIntent(RoleManager.ROLE_HOME),
-                    REQUEST_SET_DEFAULT_LAUNCHER
+                    roleManager.createRequestRoleIntent(RoleManager.ROLE_BROWSER),
+                    REQUEST_SET_DEFAULT_BROWSER
                 )
                 return
             }
         }
         try {
-            startActivity(Intent(Settings.ACTION_HOME_SETTINGS))
+            startActivity(Intent(Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS))
         } catch (e: Exception) {
-            Toast.makeText(this, getString(R.string.set_launcher_failed), Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, getString(R.string.set_default_browser_failed), Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -332,6 +338,6 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val REQUEST_STORAGE_PERMISSION = 1001
-        private const val REQUEST_SET_DEFAULT_LAUNCHER = 1002
+        private const val REQUEST_SET_DEFAULT_BROWSER = 1002
     }
 }

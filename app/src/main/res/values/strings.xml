@@ -10,6 +10,6 @@
     <string name="download_failed">فشل التحميل</string>
     <string name="download_permission_denied">لازم صلاحية التخزين عشان التحميل يشتغل</string>
     <string name="download_open_failed">معرفتش افتح الملف اللي اتحمل</string>
-    <string name="set_launcher_desc">تعيين كشاشة رئيسية افتراضية</string>
-    <string name="set_launcher_failed">معرفتش افتح إعدادات الشاشة الرئيسية</string>
+    <string name="set_default_browser_desc">تعيين كمتصفح افتراضي</string>
+    <string name="set_default_browser_failed">معرفتش افتح إعدادات المتصفح الافتراضي</string>
 </resources>
