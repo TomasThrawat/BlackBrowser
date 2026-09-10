@@ -13,6 +13,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.view.KeyEvent
+import android.view.View
 import android.view.inputmethod.EditorInfo
 import android.webkit.CookieManager
 import android.webkit.URLUtil
@@ -100,6 +101,8 @@ class MainActivity : AppCompatActivity() {
         webView.settings.domStorageEnabled = true
         webView.settings.loadWithOverviewMode = true
         webView.settings.useWideViewPort = true
+        webView.settings.offscreenPreRaster = true
+        webView.setLayerType(View.LAYER_TYPE_HARDWARE, null)
 
         webView.webViewClient = object : WebViewClient() {
             override fun onPageFinished(view: WebView?, url: String?) {
