@@ -3,6 +3,7 @@ package com.tomasthrawat.blackbrowser
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.DownloadManager
+import android.app.role.RoleManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -12,6 +13,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
+import android.provider.Settings
 import android.view.KeyEvent
 import android.view.View
 import android.view.inputmethod.EditorInfo
@@ -96,6 +98,7 @@ class MainActivity : AppCompatActivity() {
         val btnBack: ImageButton = findViewById(R.id.btnBack)
         val btnForward: ImageButton = findViewById(R.id.btnForward)
         val btnReload: ImageButton = findViewById(R.id.btnReload)
+        val btnSetLauncher: ImageButton = findViewById(R.id.btnSetLauncher)
 
         webView.settings.javaScriptEnabled = true
         webView.settings.domStorageEnabled = true
@@ -144,6 +147,10 @@ class MainActivity : AppCompatActivity() {
 
         btnReload.setOnClickListener {
             webView.reload()
+        }
+
+        btnSetLauncher.setOnClickListener {
+            requestDefaultLauncher()
         }
 
         updateAdBlockIcon()
@@ -275,6 +282,27 @@ class MainActivity : AppCompatActivity() {
         )
     }
 
+    private fun requestDefaultLauncher() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val roleManager = getSystemService(RoleManager::class.java)
+            if (roleManager != null &&
+                roleManager.isRoleAvailable(RoleManager.ROLE_HOME) &&
+                !roleManager.isRoleHeld(RoleManager.ROLE_HOME)
+            ) {
+                startActivityForResult(
+                    roleManager.createRequestRoleIntent(RoleManager.ROLE_HOME),
+                    REQUEST_SET_DEFAULT_LAUNCHER
+                )
+                return
+            }
+        }
+        try {
+            startActivity(Intent(Settings.ACTION_HOME_SETTINGS))
+        } catch (e: Exception) {
+            Toast.makeText(this, getString(R.string.set_launcher_failed), Toast.LENGTH_SHORT).show()
+        }
+    }
+
     private fun loadFromInput() {
         var input = editUrl.text.toString().trim()
         if (input.isEmpty()) return
@@ -304,5 +332,6 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val REQUEST_STORAGE_PERMISSION = 1001
+        private const val REQUEST_SET_DEFAULT_LAUNCHER = 1002
     }
 }
