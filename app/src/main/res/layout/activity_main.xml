@@ -40,6 +40,15 @@
             android:background="@android:color/transparent"
             android:contentDescription="@string/history_desc" />
 
+        <ImageButton
+            android:id="@+id/btnDownloads"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:layout_marginStart="8dp"
+            android:src="@drawable/ic_downloads"
+            android:background="@android:color/transparent"
+            android:contentDescription="@string/downloads_desc" />
+
         <TextView
             android:id="@+id/btnTabsBox"
             android:layout_width="34dp"
