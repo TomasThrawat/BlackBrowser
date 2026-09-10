@@ -241,7 +241,8 @@ object AdBlocker {
         "riobet",
         "parimatch",
         "leonbets",
-        "1xslots"
+        "1xslots",
+        "bc.game"
     )
 
     // Path/query fragments, checked with slash boundaries so normal words are never matched.
