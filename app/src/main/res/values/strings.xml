@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Black Browser</string>
+    <string name="url_hint">اكتب رابط أو دور جوجل</string>
+</resources>
