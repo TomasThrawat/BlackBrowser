@@ -1,4 +1,8 @@
 <resources>
     <string name="app_name">Black Browser</string>
-    <string name="url_hint">اكتب رابط أو دور جوجل</string>
+    <string name="url_hint">اكتب رابط او دور جوجل</string>
+    <string name="adblock_desc_on">مانع الإعلانات: شغال</string>
+    <string name="adblock_desc_off">مانع الإعلانات: متوقف</string>
+    <string name="adblock_on_toast">مانع الإعلانات اتفعل</string>
+    <string name="adblock_off_toast">مانع الإعلانات اتوقف</string>
 </resources>

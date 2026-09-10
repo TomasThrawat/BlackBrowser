@@ -55,6 +55,15 @@
             android:background="@android:color/transparent"
             android:contentDescription="Reload" />
 
+        <ImageButton
+            android:id="@+id/btnAdBlock"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:layout_marginStart="8dp"
+            android:src="@drawable/ic_shield"
+            android:background="@android:color/transparent"
+            android:contentDescription="@string/adblock_desc_on" />
+
     </LinearLayout>
 
     <ProgressBar
