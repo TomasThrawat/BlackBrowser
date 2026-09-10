@@ -43,7 +43,8 @@ class MainActivity : AppCompatActivity() {
         val url: String,
         val userAgent: String,
         val contentDisposition: String,
-        val mimeType: String
+        val mimeType: String,
+        val referer: String?
     )
 
     private var pendingDownload: PendingDownload? = null
@@ -127,7 +128,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         webView.setDownloadListener { url, userAgent, contentDisposition, mimeType, _ ->
-            startDownload(url, userAgent, contentDisposition, mimeType)
+            startDownload(url, userAgent, contentDisposition, mimeType, webView.url)
         }
 
         btnBack.setOnClickListener {
@@ -188,13 +189,19 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun startDownload(url: String, userAgent: String, contentDisposition: String, mimeType: String) {
+    private fun startDownload(
+        url: String,
+        userAgent: String,
+        contentDisposition: String,
+        mimeType: String,
+        referer: String?
+    ) {
         val needsLegacyStoragePermission = Build.VERSION.SDK_INT <= Build.VERSION_CODES.P &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) !=
             PackageManager.PERMISSION_GRANTED
 
         if (needsLegacyStoragePermission) {
-            pendingDownload = PendingDownload(url, userAgent, contentDisposition, mimeType)
+            pendingDownload = PendingDownload(url, userAgent, contentDisposition, mimeType, referer)
             ActivityCompat.requestPermissions(
                 this,
                 arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE),
@@ -203,15 +210,22 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        enqueueDownload(url, userAgent, contentDisposition, mimeType)
+        enqueueDownload(url, userAgent, contentDisposition, mimeType, referer)
     }
 
-    private fun enqueueDownload(url: String, userAgent: String, contentDisposition: String, mimeType: String) {
+    private fun enqueueDownload(
+        url: String,
+        userAgent: String,
+        contentDisposition: String,
+        mimeType: String,
+        referer: String?
+    ) {
         try {
             val fileName = URLUtil.guessFileName(url, contentDisposition, mimeType)
             val request = DownloadManager.Request(Uri.parse(url)).apply {
-                addRequestHeader("cookie", CookieManager.getInstance().getCookie(url))
+                CookieManager.getInstance().getCookie(url)?.let { addRequestHeader("cookie", it) }
                 addRequestHeader("User-Agent", userAgent)
+                referer?.let { addRequestHeader("Referer", it) }
                 setMimeType(mimeType)
                 setTitle(fileName)
                 setDescription(getString(R.string.downloading))
@@ -239,7 +253,7 @@ class MainActivity : AppCompatActivity() {
             val request = pendingDownload
             pendingDownload = null
             if (granted && request != null) {
-                enqueueDownload(request.url, request.userAgent, request.contentDisposition, request.mimeType)
+                enqueueDownload(request.url, request.userAgent, request.contentDisposition, request.mimeType, request.referer)
             } else if (!granted) {
                 Toast.makeText(this, getString(R.string.download_permission_denied), Toast.LENGTH_SHORT).show()
             }
