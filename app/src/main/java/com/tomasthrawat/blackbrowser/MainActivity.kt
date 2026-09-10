@@ -39,6 +39,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var editUrl: EditText
     private lateinit var progressBar: ProgressBar
     private lateinit var btnAdBlock: ImageButton
+    private lateinit var btnSetDefaultBrowser: ImageButton
 
     private val homeUrl = "https://www.google.com"
 
@@ -98,7 +99,7 @@ class MainActivity : AppCompatActivity() {
         val btnBack: ImageButton = findViewById(R.id.btnBack)
         val btnForward: ImageButton = findViewById(R.id.btnForward)
         val btnReload: ImageButton = findViewById(R.id.btnReload)
-        val btnSetDefaultBrowser: ImageButton = findViewById(R.id.btnSetDefaultBrowser)
+        btnSetDefaultBrowser = findViewById(R.id.btnSetDefaultBrowser)
 
         webView.settings.javaScriptEnabled = true
         webView.settings.domStorageEnabled = true
@@ -184,6 +185,11 @@ class MainActivity : AppCompatActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         intent.dataString?.let { webView.loadUrl(it) }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        updateDefaultBrowserButtonVisibility()
     }
 
     override fun onStart() {
@@ -307,6 +313,24 @@ class MainActivity : AppCompatActivity() {
         } catch (e: Exception) {
             Toast.makeText(this, getString(R.string.set_default_browser_failed), Toast.LENGTH_SHORT).show()
         }
+    }
+
+    private fun isDefaultBrowser(): Boolean {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val roleManager = getSystemService(RoleManager::class.java)
+            if (roleManager != null && roleManager.isRoleAvailable(RoleManager.ROLE_BROWSER)) {
+                return roleManager.isRoleHeld(RoleManager.ROLE_BROWSER)
+            }
+        }
+        val resolveInfo = packageManager.resolveActivity(
+            Intent(Intent.ACTION_VIEW, Uri.parse("http://")),
+            PackageManager.MATCH_DEFAULT_ONLY
+        )
+        return resolveInfo?.activityInfo?.packageName == packageName
+    }
+
+    private fun updateDefaultBrowserButtonVisibility() {
+        btnSetDefaultBrowser.visibility = if (isDefaultBrowser()) View.GONE else View.VISIBLE
     }
 
     private fun loadFromInput() {
