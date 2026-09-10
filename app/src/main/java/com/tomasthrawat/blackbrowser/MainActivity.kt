@@ -9,10 +9,12 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.graphics.Color
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
+import android.os.Message
 import android.provider.Settings
 import android.view.KeyEvent
 import android.view.View
@@ -22,6 +24,7 @@ import android.webkit.URLUtil
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
+import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Button
@@ -36,6 +39,8 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.webkit.WebSettingsCompat
+import androidx.webkit.WebViewFeature
 import java.io.ByteArrayInputStream
 
 class MainActivity : AppCompatActivity() {
@@ -188,6 +193,9 @@ class MainActivity : AppCompatActivity() {
 
     override fun onStop() {
         super.onStop()
+        // Persist cookies to disk now (not just periodically) so a session/login started
+        // right before the app is backgrounded or killed is not silently lost.
+        CookieManager.getInstance().flush()
         try {
             unregisterReceiver(downloadCompleteReceiver)
         } catch (e: IllegalArgumentException) {
@@ -208,12 +216,36 @@ class MainActivity : AppCompatActivity() {
             FrameLayout.LayoutParams.MATCH_PARENT,
             FrameLayout.LayoutParams.MATCH_PARENT
         )
+        // Pure black immediately, before any page (or its own background) has painted.
+        wv.setBackgroundColor(Color.BLACK)
         wv.settings.javaScriptEnabled = true
         wv.settings.domStorageEnabled = true
         wv.settings.loadWithOverviewMode = true
         wv.settings.useWideViewPort = true
         wv.settings.offscreenPreRaster = true
+        // Some login/redirect chains still serve a stray http:// sub-resource from an
+        // otherwise https:// page; without this WebView silently drops it and the page can
+        // get stuck instead of completing its redirect.
+        wv.settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+        // Needed so onCreateWindow below actually gets called for window.open() (sign-in
+        // popups, ad pop-unders) instead of the request being silently dropped.
+        wv.settings.setSupportMultipleWindows(true)
+        // Blocks popups a script opens on its own (typical pop-under ad behavior) while still
+        // allowing a real tap-triggered window.open() (typical "sign in with ..." button) to
+        // reach onCreateWindow below.
+        wv.settings.javaScriptCanOpenWindowsAutomatically = false
         wv.setLayerType(View.LAYER_TYPE_HARDWARE, null)
+
+        // Pure-black rendering for every site, by default, when the installed WebView build
+        // supports it (androidx.webkit feature-detected — never assumed).
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.ALGORITHMIC_DARKENING)) {
+            WebSettingsCompat.setAlgorithmicDarkeningAllowed(wv.settings, true)
+        }
+
+        // Third-party cookies are off by default per-WebView; most cross-domain sign-in
+        // redirects (Google/Facebook/GitHub OAuth callbacks, etc.) depend on them to complete.
+        CookieManager.getInstance().setAcceptCookie(true)
+        CookieManager.getInstance().setAcceptThirdPartyCookies(wv, true)
 
         wv.webViewClient = object : WebViewClient() {
             override fun onPageFinished(view: WebView?, url: String?) {
@@ -225,6 +257,16 @@ class MainActivity : AppCompatActivity() {
                     editUrl.setText(tab.url)
                 }
                 HistoryStore.add(this@MainActivity, tab.title, tab.url)
+
+                if (AdBlockPrefs.isEnabled(this@MainActivity)) {
+                    val css = org.json.JSONObject.quote(AdBlocker.cosmeticHideCss())
+                    view?.evaluateJavascript(
+                        "(function(){var s=document.createElement('style');" +
+                            "s.type='text/css';s.appendChild(document.createTextNode($css));" +
+                            "document.head.appendChild(s);})();",
+                        null
+                    )
+                }
             }
 
             override fun shouldInterceptRequest(
@@ -246,6 +288,43 @@ class MainActivity : AppCompatActivity() {
                     progressBar.progress = newProgress
                     progressBar.visibility = if (newProgress in 1..99) ProgressBar.VISIBLE else ProgressBar.GONE
                 }
+            }
+
+            // Handles every window.open() request in one place: ad/tracker pop-unders are
+            // resolved and swallowed before they ever open, while a legitimate popup (sign-in
+            // flows are the common case) has its destination followed in the current tab
+            // instead of vanishing into a WebView that is never attached to any screen — that
+            // silent drop is what used to look like "the site doesn't redirect after sign-in".
+            override fun onCreateWindow(
+                view: WebView?,
+                isDialog: Boolean,
+                isUserGesture: Boolean,
+                resultMsg: Message?
+            ): Boolean {
+                if (resultMsg == null) return false
+                val transport = resultMsg.obj as? WebView.WebViewTransport ?: return false
+
+                val popup = WebView(this@MainActivity)
+                popup.settings.javaScriptEnabled = true
+                popup.settings.domStorageEnabled = true
+                popup.webViewClient = object : WebViewClient() {
+                    override fun shouldOverrideUrlLoading(
+                        v: WebView?,
+                        request: WebResourceRequest?
+                    ): Boolean {
+                        val destUrl = request?.url
+                        popup.destroy()
+                        if (destUrl == null) return true
+                        if (AdBlockPrefs.isEnabled(this@MainActivity) && AdBlocker.shouldBlock(destUrl)) {
+                            return true
+                        }
+                        activeWebView.loadUrl(destUrl.toString())
+                        return true
+                    }
+                }
+                transport.webView = popup
+                resultMsg.sendToTarget()
+                return true
             }
         }
 
