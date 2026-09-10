@@ -1,10 +1,21 @@
 package com.tomasthrawat.blackbrowser
 
+import android.Manifest
 import android.annotation.SuppressLint
+import android.app.DownloadManager
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.os.Environment
 import android.view.KeyEvent
 import android.view.inputmethod.EditorInfo
+import android.webkit.CookieManager
+import android.webkit.URLUtil
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
@@ -15,6 +26,7 @@ import android.widget.ImageButton
 import android.widget.ProgressBar
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import java.io.ByteArrayInputStream
 
@@ -26,6 +38,48 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnAdBlock: ImageButton
 
     private val homeUrl = "https://www.google.com"
+
+    private data class PendingDownload(
+        val url: String,
+        val userAgent: String,
+        val contentDisposition: String,
+        val mimeType: String
+    )
+
+    private var pendingDownload: PendingDownload? = null
+
+    private val downloadCompleteReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            val id = intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1L)
+            if (id == -1L) return
+
+            val dm = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+            val cursor = dm.query(DownloadManager.Query().setFilterById(id))
+            cursor.use {
+                if (!it.moveToFirst()) return@use
+
+                val statusIdx = it.getColumnIndex(DownloadManager.COLUMN_STATUS)
+                val mimeIdx = it.getColumnIndex(DownloadManager.COLUMN_MEDIA_TYPE)
+                val status = if (statusIdx >= 0) it.getInt(statusIdx) else -1
+                val mime = if (mimeIdx >= 0) it.getString(mimeIdx) else null
+
+                if (status == DownloadManager.STATUS_SUCCESSFUL &&
+                    mime == "application/vnd.android.package-archive"
+                ) {
+                    try {
+                        val contentUri = dm.getUriForDownloadedFile(id)
+                        val installIntent = Intent(Intent.ACTION_VIEW).apply {
+                            setDataAndType(contentUri, "application/vnd.android.package-archive")
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        }
+                        context.startActivity(installIntent)
+                    } catch (e: Exception) {
+                        Toast.makeText(context, getString(R.string.download_open_failed), Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        }
+    }
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -72,6 +126,10 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        webView.setDownloadListener { url, userAgent, contentDisposition, mimeType, _ ->
+            startDownload(url, userAgent, contentDisposition, mimeType)
+        }
+
         btnBack.setOnClickListener {
             if (webView.canGoBack()) webView.goBack()
         }
@@ -111,6 +169,83 @@ class MainActivity : AppCompatActivity() {
         webView.loadUrl(homeUrl)
     }
 
+    override fun onStart() {
+        super.onStart()
+        ContextCompat.registerReceiver(
+            this,
+            downloadCompleteReceiver,
+            IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE),
+            ContextCompat.RECEIVER_NOT_EXPORTED
+        )
+    }
+
+    override fun onStop() {
+        super.onStop()
+        try {
+            unregisterReceiver(downloadCompleteReceiver)
+        } catch (e: IllegalArgumentException) {
+            // already unregistered
+        }
+    }
+
+    private fun startDownload(url: String, userAgent: String, contentDisposition: String, mimeType: String) {
+        val needsLegacyStoragePermission = Build.VERSION.SDK_INT <= Build.VERSION_CODES.P &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) !=
+            PackageManager.PERMISSION_GRANTED
+
+        if (needsLegacyStoragePermission) {
+            pendingDownload = PendingDownload(url, userAgent, contentDisposition, mimeType)
+            ActivityCompat.requestPermissions(
+                this,
+                arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE),
+                REQUEST_STORAGE_PERMISSION
+            )
+            return
+        }
+
+        enqueueDownload(url, userAgent, contentDisposition, mimeType)
+    }
+
+    private fun enqueueDownload(url: String, userAgent: String, contentDisposition: String, mimeType: String) {
+        try {
+            val fileName = URLUtil.guessFileName(url, contentDisposition, mimeType)
+            val request = DownloadManager.Request(Uri.parse(url)).apply {
+                addRequestHeader("cookie", CookieManager.getInstance().getCookie(url))
+                addRequestHeader("User-Agent", userAgent)
+                setMimeType(mimeType)
+                setTitle(fileName)
+                setDescription(getString(R.string.downloading))
+                setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+                setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName)
+                setAllowedOverMetered(true)
+                setAllowedOverRoaming(true)
+            }
+            val dm = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+            dm.enqueue(request)
+            Toast.makeText(this, getString(R.string.download_started, fileName), Toast.LENGTH_SHORT).show()
+        } catch (e: Exception) {
+            Toast.makeText(this, getString(R.string.download_failed), Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQUEST_STORAGE_PERMISSION) {
+            val granted = grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED
+            val request = pendingDownload
+            pendingDownload = null
+            if (granted && request != null) {
+                enqueueDownload(request.url, request.userAgent, request.contentDisposition, request.mimeType)
+            } else if (!granted) {
+                Toast.makeText(this, getString(R.string.download_permission_denied), Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
     private fun updateAdBlockIcon() {
         val enabled = AdBlockPrefs.isEnabled(this)
         val color = ContextCompat.getColor(
@@ -148,5 +283,9 @@ class MainActivity : AppCompatActivity() {
         } else {
             super.onBackPressed()
         }
+    }
+
+    companion object {
+        private const val REQUEST_STORAGE_PERMISSION = 1001
     }
 }

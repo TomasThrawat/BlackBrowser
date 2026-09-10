@@ -5,4 +5,9 @@
     <string name="adblock_desc_off">مانع الإعلانات: متوقف</string>
     <string name="adblock_on_toast">مانع الإعلانات اتفعل</string>
     <string name="adblock_off_toast">مانع الإعلانات اتوقف</string>
+    <string name="downloading">جاري التحميل</string>
+    <string name="download_started">بدأ تحميل: %1$s</string>
+    <string name="download_failed">فشل التحميل</string>
+    <string name="download_permission_denied">لازم صلاحية التخزين عشان التحميل يشتغل</string>
+    <string name="download_open_failed">معرفتش افتح الملف اللي اتحمل</string>
 </resources>
