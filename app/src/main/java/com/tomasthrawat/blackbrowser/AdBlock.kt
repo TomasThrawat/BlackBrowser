@@ -181,6 +181,12 @@ object AdBlocker {
         "srtk.net",
         "clickaine.com",
 
+        // Crypto ad networks (banner ads for casino/gambling brands like the bc.game
+        // one above, common on manga/novel piracy sites) and forced app-install /
+        // "continue in safe mode" redirect gates.
+        "a-ads.com",
+        "tukrd.com",
+
         // Mobile / in-app ad SDK endpoints (also fire inside WebView pages)
         "vungle.com",
         "chartboost.com",
