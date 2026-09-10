@@ -21,4 +21,12 @@
     <string name="history_title">سجل التصفح</string>
     <string name="clear_history">مسح السجل</string>
     <string name="history_empty">مفيش سجل تصفح لسه</string>
+    <string name="downloads_desc">التحميلات</string>
+    <string name="downloads_title">التحميلات</string>
+    <string name="downloads_empty">مفيش تحميلات لسه</string>
+    <string name="download_status_pending">قيد الانتظار</string>
+    <string name="download_status_running">جاري التحميل</string>
+    <string name="download_status_paused">متوقف مؤقتاً</string>
+    <string name="download_status_success">تم التحميل</string>
+    <string name="download_status_failed">فشل التحميل</string>
 </resources>
