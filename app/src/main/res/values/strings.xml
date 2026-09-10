@@ -29,5 +29,4 @@
     <string name="download_status_paused">متوقف مؤقتاً</string>
     <string name="download_status_success">تم التحميل</string>
     <string name="download_status_failed">فشل التحميل</string>
-    <string name="popup_blocked_toast">تم حظر نافذة منبثقة</string>
 </resources>

@@ -265,11 +265,6 @@ class MainActivity : AppCompatActivity() {
             ): Boolean {
                 val url = request?.url ?: return false
                 if (AdBlockPrefs.isEnabled(this@MainActivity) && AdBlocker.shouldBlock(url)) {
-                    Toast.makeText(
-                        this@MainActivity,
-                        getString(R.string.popup_blocked_toast),
-                        Toast.LENGTH_SHORT
-                    ).show()
                     return true
                 }
                 return false
@@ -357,11 +352,6 @@ class MainActivity : AppCompatActivity() {
                             (AdBlocker.shouldBlock(destUrl) ||
                                 !AdBlocker.isTrustedPopupDestination(destUrl, openerUrl))
                         if (isUnwantedPopup) {
-                            Toast.makeText(
-                                this@MainActivity,
-                                getString(R.string.popup_blocked_toast),
-                                Toast.LENGTH_SHORT
-                            ).show()
                             return true
                         }
                         activeWebView.loadUrl(destUrl.toString())
