@@ -5,4 +5,5 @@
     <color name="gray_hint">#FF666666</color>
     <color name="adblock_on">#FF00E676</color>
     <color name="adblock_off">#FF757575</color>
+    <color name="close_red">#FFFF5252</color>
 </resources>

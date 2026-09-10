@@ -14,8 +14,8 @@
         android:progressTint="@color/white"
         android:visibility="gone" />
 
-    <WebView
-        android:id="@+id/webView"
+    <FrameLayout
+        android:id="@+id/webViewContainer"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
@@ -32,28 +32,11 @@
         android:paddingTop="8dp"
         android:paddingBottom="8dp">
 
-        <ImageButton
-            android:id="@+id/btnBack"
-            android:layout_width="40dp"
-            android:layout_height="40dp"
-            android:src="@android:drawable/ic_media_previous"
-            android:background="@android:color/transparent"
-            android:contentDescription="Back" />
-
-        <ImageButton
-            android:id="@+id/btnForward"
-            android:layout_width="40dp"
-            android:layout_height="40dp"
-            android:src="@android:drawable/ic_media_next"
-            android:background="@android:color/transparent"
-            android:contentDescription="Forward" />
-
         <EditText
             android:id="@+id/editUrl"
             android:layout_width="0dp"
             android:layout_height="40dp"
             android:layout_weight="1"
-            android:layout_marginStart="8dp"
             android:hint="@string/url_hint"
             android:textColor="@color/white"
             android:textColorHint="@color/gray_hint"
@@ -88,6 +71,28 @@
             android:src="@drawable/ic_home"
             android:background="@android:color/transparent"
             android:contentDescription="@string/set_default_browser_desc" />
+
+        <ImageButton
+            android:id="@+id/btnHistory"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:layout_marginStart="8dp"
+            android:src="@drawable/ic_history"
+            android:background="@android:color/transparent"
+            android:contentDescription="@string/history_desc" />
+
+        <TextView
+            android:id="@+id/btnTabsBox"
+            android:layout_width="34dp"
+            android:layout_height="34dp"
+            android:layout_marginStart="8dp"
+            android:background="@drawable/bg_tab_box"
+            android:gravity="center"
+            android:text="1"
+            android:textColor="@color/white"
+            android:textSize="13sp"
+            android:textStyle="bold"
+            android:contentDescription="@string/tabs_desc" />
 
     </LinearLayout>
 

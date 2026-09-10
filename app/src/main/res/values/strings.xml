@@ -12,4 +12,13 @@
     <string name="download_open_failed">معرفتش افتح الملف اللي اتحمل</string>
     <string name="set_default_browser_desc">تعيين كمتصفح افتراضي</string>
     <string name="set_default_browser_failed">معرفتش افتح إعدادات المتصفح الافتراضي</string>
+    <string name="tabs_desc">التبويبات المفتوحة</string>
+    <string name="tabs_title">التبويبات</string>
+    <string name="new_tab">+ تبويب جديد</string>
+    <string name="new_tab_title">تبويب جديد</string>
+    <string name="close_tab_desc">قفل التبويب</string>
+    <string name="history_desc">سجل التصفح</string>
+    <string name="history_title">سجل التصفح</string>
+    <string name="clear_history">مسح السجل</string>
+    <string name="history_empty">مفيش سجل تصفح لسه</string>
 </resources>

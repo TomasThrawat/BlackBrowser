@@ -24,10 +24,15 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.Button
 import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.ImageButton
+import android.widget.LinearLayout
 import android.widget.ProgressBar
+import android.widget.TextView
 import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -35,13 +40,29 @@ import java.io.ByteArrayInputStream
 
 class MainActivity : AppCompatActivity() {
 
-    private lateinit var webView: WebView
+    private data class Tab(
+        val id: Int,
+        val webView: WebView,
+        var title: String,
+        var url: String
+    )
+
+    private lateinit var webViewContainer: FrameLayout
     private lateinit var editUrl: EditText
     private lateinit var progressBar: ProgressBar
     private lateinit var btnAdBlock: ImageButton
     private lateinit var btnSetDefaultBrowser: ImageButton
+    private lateinit var btnHistory: ImageButton
+    private lateinit var btnTabsBox: TextView
 
     private val homeUrl = "https://www.google.com"
+
+    private val tabs = mutableListOf<Tab>()
+    private var currentTabIndex = 0
+    private var nextTabId = 1
+
+    private val activeWebView: WebView
+        get() = tabs[currentTabIndex].webView
 
     private data class PendingDownload(
         val url: String,
@@ -91,63 +112,18 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        webView = findViewById(R.id.webView)
+        webViewContainer = findViewById(R.id.webViewContainer)
         editUrl = findViewById(R.id.editUrl)
         progressBar = findViewById(R.id.progressBar)
         btnAdBlock = findViewById(R.id.btnAdBlock)
-
-        val btnBack: ImageButton = findViewById(R.id.btnBack)
-        val btnForward: ImageButton = findViewById(R.id.btnForward)
-        val btnReload: ImageButton = findViewById(R.id.btnReload)
         btnSetDefaultBrowser = findViewById(R.id.btnSetDefaultBrowser)
+        btnHistory = findViewById(R.id.btnHistory)
+        btnTabsBox = findViewById(R.id.btnTabsBox)
 
-        webView.settings.javaScriptEnabled = true
-        webView.settings.domStorageEnabled = true
-        webView.settings.loadWithOverviewMode = true
-        webView.settings.useWideViewPort = true
-        webView.settings.offscreenPreRaster = true
-        webView.setLayerType(View.LAYER_TYPE_HARDWARE, null)
-
-        webView.webViewClient = object : WebViewClient() {
-            override fun onPageFinished(view: WebView?, url: String?) {
-                super.onPageFinished(view, url)
-                editUrl.setText(url)
-            }
-
-            override fun shouldInterceptRequest(
-                view: WebView?,
-                request: WebResourceRequest?
-            ): WebResourceResponse? {
-                val url = request?.url
-                if (url != null && AdBlockPrefs.isEnabled(this@MainActivity) && AdBlocker.shouldBlock(url)) {
-                    return WebResourceResponse("text/plain", "UTF-8", ByteArrayInputStream(ByteArray(0)))
-                }
-                return super.shouldInterceptRequest(view, request)
-            }
-        }
-
-        webView.webChromeClient = object : WebChromeClient() {
-            override fun onProgressChanged(view: WebView?, newProgress: Int) {
-                super.onProgressChanged(view, newProgress)
-                progressBar.progress = newProgress
-                progressBar.visibility = if (newProgress in 1..99) ProgressBar.VISIBLE else ProgressBar.GONE
-            }
-        }
-
-        webView.setDownloadListener { url, userAgent, contentDisposition, mimeType, _ ->
-            startDownload(url, userAgent, contentDisposition, mimeType, webView.url)
-        }
-
-        btnBack.setOnClickListener {
-            if (webView.canGoBack()) webView.goBack()
-        }
-
-        btnForward.setOnClickListener {
-            if (webView.canGoForward()) webView.goForward()
-        }
+        val btnReload: ImageButton = findViewById(R.id.btnReload)
 
         btnReload.setOnClickListener {
-            webView.reload()
+            activeWebView.reload()
         }
 
         btnSetDefaultBrowser.setOnClickListener {
@@ -164,7 +140,15 @@ class MainActivity : AppCompatActivity() {
                 if (enabled) getString(R.string.adblock_on_toast) else getString(R.string.adblock_off_toast),
                 Toast.LENGTH_SHORT
             ).show()
-            webView.reload()
+            activeWebView.reload()
+        }
+
+        btnHistory.setOnClickListener {
+            showHistoryDialog()
+        }
+
+        btnTabsBox.setOnClickListener {
+            showTabsDialog()
         }
 
         editUrl.setOnEditorActionListener { _, actionId, event ->
@@ -178,13 +162,13 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        webView.loadUrl(intent?.dataString ?: homeUrl)
+        addNewTab(intent?.dataString ?: homeUrl)
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        intent.dataString?.let { webView.loadUrl(it) }
+        intent.dataString?.let { addNewTab(it) }
     }
 
     override fun onResume() {
@@ -210,6 +194,189 @@ class MainActivity : AppCompatActivity() {
             // already unregistered
         }
     }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        tabs.forEach { it.webView.destroy() }
+    }
+
+    // ---- Tabs ----
+
+    private fun createWebView(): WebView {
+        val wv = WebView(this)
+        wv.layoutParams = FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.MATCH_PARENT
+        )
+        wv.settings.javaScriptEnabled = true
+        wv.settings.domStorageEnabled = true
+        wv.settings.loadWithOverviewMode = true
+        wv.settings.useWideViewPort = true
+        wv.settings.offscreenPreRaster = true
+        wv.setLayerType(View.LAYER_TYPE_HARDWARE, null)
+
+        wv.webViewClient = object : WebViewClient() {
+            override fun onPageFinished(view: WebView?, url: String?) {
+                super.onPageFinished(view, url)
+                val tab = tabs.find { it.webView === view } ?: return
+                tab.url = url ?: tab.url
+                tab.title = view?.title?.takeIf { it.isNotBlank() } ?: tab.url
+                if (tabs.getOrNull(currentTabIndex)?.webView === view) {
+                    editUrl.setText(tab.url)
+                }
+                HistoryStore.add(this@MainActivity, tab.title, tab.url)
+            }
+
+            override fun shouldInterceptRequest(
+                view: WebView?,
+                request: WebResourceRequest?
+            ): WebResourceResponse? {
+                val url = request?.url
+                if (url != null && AdBlockPrefs.isEnabled(this@MainActivity) && AdBlocker.shouldBlock(url)) {
+                    return WebResourceResponse("text/plain", "UTF-8", ByteArrayInputStream(ByteArray(0)))
+                }
+                return super.shouldInterceptRequest(view, request)
+            }
+        }
+
+        wv.webChromeClient = object : WebChromeClient() {
+            override fun onProgressChanged(view: WebView?, newProgress: Int) {
+                super.onProgressChanged(view, newProgress)
+                if (tabs.getOrNull(currentTabIndex)?.webView === view) {
+                    progressBar.progress = newProgress
+                    progressBar.visibility = if (newProgress in 1..99) ProgressBar.VISIBLE else ProgressBar.GONE
+                }
+            }
+        }
+
+        wv.setDownloadListener { url, userAgent, contentDisposition, mimeType, _ ->
+            startDownload(url, userAgent, contentDisposition, mimeType, wv.url)
+        }
+
+        return wv
+    }
+
+    private fun addNewTab(url: String = homeUrl) {
+        val wv = createWebView()
+        val tab = Tab(nextTabId++, wv, getString(R.string.new_tab_title), url)
+        tabs.add(tab)
+        wv.loadUrl(url)
+        switchToTab(tabs.size - 1)
+        updateTabsBoxCount()
+    }
+
+    private fun switchToTab(index: Int) {
+        if (index !in tabs.indices) return
+        currentTabIndex = index
+        webViewContainer.removeAllViews()
+        webViewContainer.addView(tabs[index].webView)
+        editUrl.setText(tabs[index].url)
+        updateDefaultBrowserButtonVisibility()
+    }
+
+    private fun closeTab(index: Int) {
+        if (index !in tabs.indices) return
+        val tab = tabs[index]
+        val wasActive = index == currentTabIndex
+        tabs.removeAt(index)
+        webViewContainer.removeView(tab.webView)
+        tab.webView.stopLoading()
+        tab.webView.destroy()
+
+        if (tabs.isEmpty()) {
+            addNewTab()
+            return
+        }
+
+        if (wasActive) {
+            switchToTab(index.coerceAtMost(tabs.size - 1))
+        } else if (index < currentTabIndex) {
+            currentTabIndex -= 1
+        }
+        updateTabsBoxCount()
+    }
+
+    private fun updateTabsBoxCount() {
+        btnTabsBox.text = tabs.size.toString()
+    }
+
+    private fun showTabsDialog() {
+        val dialogView = layoutInflater.inflate(R.layout.dialog_tabs, null)
+        val listContainer = dialogView.findViewById<LinearLayout>(R.id.tabsListContainer)
+        val btnNewTab = dialogView.findViewById<Button>(R.id.btnNewTab)
+
+        val dialog = AlertDialog.Builder(this)
+            .setView(dialogView)
+            .create()
+
+        fun rebuild() {
+            listContainer.removeAllViews()
+            tabs.forEachIndexed { index, tab ->
+                val row = layoutInflater.inflate(R.layout.item_tab_row, listContainer, false)
+                val rowText = row.findViewById<TextView>(R.id.rowText)
+                val rowClose = row.findViewById<TextView>(R.id.rowClose)
+                val label = tab.title.ifBlank { tab.url }
+                rowText.text = if (index == currentTabIndex) "\u25CF $label" else label
+                row.setOnClickListener {
+                    switchToTab(index)
+                    dialog.dismiss()
+                }
+                rowClose.setOnClickListener {
+                    closeTab(index)
+                    if (tabs.isEmpty()) dialog.dismiss() else rebuild()
+                }
+                listContainer.addView(row)
+            }
+        }
+
+        rebuild()
+
+        btnNewTab.setOnClickListener {
+            addNewTab()
+            dialog.dismiss()
+        }
+
+        dialog.show()
+    }
+
+    // ---- History ----
+
+    private fun showHistoryDialog() {
+        val dialogView = layoutInflater.inflate(R.layout.dialog_history, null)
+        val listContainer = dialogView.findViewById<LinearLayout>(R.id.historyListContainer)
+        val emptyText = dialogView.findViewById<TextView>(R.id.historyEmptyText)
+        val btnClear = dialogView.findViewById<Button>(R.id.btnClearHistory)
+
+        val dialog = AlertDialog.Builder(this)
+            .setView(dialogView)
+            .create()
+
+        fun rebuild() {
+            listContainer.removeAllViews()
+            val entries = HistoryStore.getAll(this)
+            emptyText.visibility = if (entries.isEmpty()) View.VISIBLE else View.GONE
+            entries.forEach { entry ->
+                val row = layoutInflater.inflate(R.layout.item_history_row, listContainer, false) as TextView
+                row.text = entry.title.ifBlank { entry.url }
+                row.setOnClickListener {
+                    activeWebView.loadUrl(entry.url)
+                    dialog.dismiss()
+                }
+                listContainer.addView(row)
+            }
+        }
+
+        rebuild()
+
+        btnClear.setOnClickListener {
+            HistoryStore.clear(this)
+            rebuild()
+        }
+
+        dialog.show()
+    }
+
+    // ---- Downloads ----
 
     private fun startDownload(
         url: String,
@@ -282,6 +449,8 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // ---- Ad block / default browser ----
+
     private fun updateAdBlockIcon() {
         val enabled = AdBlockPrefs.isEnabled(this)
         val color = ContextCompat.getColor(
@@ -348,13 +517,13 @@ class MainActivity : AppCompatActivity() {
             "https://www.google.com/search?q=${Uri.encode(input)}"
         }
 
-        webView.loadUrl(input)
+        activeWebView.loadUrl(input)
     }
 
     @Suppress("DEPRECATION", "MissingSuperCall")
     override fun onBackPressed() {
-        if (webView.canGoBack()) {
-            webView.goBack()
+        if (activeWebView.canGoBack()) {
+            activeWebView.goBack()
         } else {
             super.onBackPressed()
         }

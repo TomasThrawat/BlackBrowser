@@ -127,6 +127,14 @@ object AdBlocker {
         "ads.microsoft.com"
     )
 
+    // Betting/gambling brand block: matched as a host substring so any mirror domain, TLD
+    // variant, or subdomain of the brand is caught (e.g. 1xbet.com, 1xbet.ug, m.1xbet.ke,
+    // 1xlite-europe.com) without needing to hardcode every rotating mirror.
+    private val blockedHostSubstrings: List<String> = listOf(
+        "1xbet",
+        "1xlite"
+    )
+
     // Path/query fragments, checked with slash boundaries so normal words are never matched.
     private val blockedPatterns: List<String> = listOf(
         "/ads/", "/ad/", "/adserver/", "/adserving/", "/pagead/", "/adframe",
@@ -138,6 +146,7 @@ object AdBlocker {
     fun shouldBlock(uri: Uri): Boolean {
         val host = uri.host?.lowercase() ?: return false
         if (blockedHosts.any { host == it || host.endsWith(".$it") }) return true
+        if (blockedHostSubstrings.any { host.contains(it) }) return true
 
         val fullUrl = uri.toString().lowercase()
         return blockedPatterns.any { fullUrl.contains(it) }
