@@ -255,6 +255,26 @@ class MainActivity : AppCompatActivity() {
         CookieManager.getInstance().setAcceptThirdPartyCookies(wv, true)
 
         wv.webViewClient = object : WebViewClient() {
+            // Stops a same-tab redirect chain (meta-refresh, JS location change, a clicked
+            // link, or the tail end of a popup forwarded below) from landing on a known
+            // ad/tracker/gambling host, on top of the resource-level check in
+            // shouldInterceptRequest further down.
+            override fun shouldOverrideUrlLoading(
+                view: WebView?,
+                request: WebResourceRequest?
+            ): Boolean {
+                val url = request?.url ?: return false
+                if (AdBlockPrefs.isEnabled(this@MainActivity) && AdBlocker.shouldBlock(url)) {
+                    Toast.makeText(
+                        this@MainActivity,
+                        getString(R.string.popup_blocked_toast),
+                        Toast.LENGTH_SHORT
+                    ).show()
+                    return true
+                }
+                return false
+            }
+
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
                 val tab = tabs.find { it.webView === view } ?: return
@@ -308,8 +328,17 @@ class MainActivity : AppCompatActivity() {
                 isUserGesture: Boolean,
                 resultMsg: Message?
             ): Boolean {
+                // A window.open() the page fired on its own, with no tap behind it, is exactly
+                // the pop-under pattern javaScriptCanOpenWindowsAutomatically=false exists to
+                // stop; if it still reaches here on some WebView build, refuse it outright.
+                if (!isUserGesture) return false
                 if (resultMsg == null) return false
                 val transport = resultMsg.obj as? WebView.WebViewTransport ?: return false
+
+                // Captured now: a tap-hijacking ad overlay can navigate the opener itself
+                // before the popup's first URL resolves, which would otherwise let a blocked
+                // destination borrow the *new* opener URL as its own trusted origin.
+                val openerUrl = view?.url
 
                 val popup = WebView(this@MainActivity)
                 popup.settings.javaScriptEnabled = true
@@ -322,7 +351,17 @@ class MainActivity : AppCompatActivity() {
                         val destUrl = request?.url
                         popup.destroy()
                         if (destUrl == null) return true
-                        if (AdBlockPrefs.isEnabled(this@MainActivity) && AdBlocker.shouldBlock(destUrl)) {
+
+                        val adBlockOn = AdBlockPrefs.isEnabled(this@MainActivity)
+                        val isUnwantedPopup = adBlockOn &&
+                            (AdBlocker.shouldBlock(destUrl) ||
+                                !AdBlocker.isTrustedPopupDestination(destUrl, openerUrl))
+                        if (isUnwantedPopup) {
+                            Toast.makeText(
+                                this@MainActivity,
+                                getString(R.string.popup_blocked_toast),
+                                Toast.LENGTH_SHORT
+                            ).show()
                             return true
                         }
                         activeWebView.loadUrl(destUrl.toString())

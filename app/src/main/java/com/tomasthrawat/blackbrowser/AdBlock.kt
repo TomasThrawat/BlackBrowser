@@ -304,6 +304,51 @@ object AdBlocker {
         return blockedPatterns.any { fullUrl.contains(it) }
     }
 
+    // Popup destinations (window.open results) are only auto-forwarded into the visible tab
+    // when they land on one of these well-known identity-provider hosts — the "sign in with
+    // ..." case onCreateWindow exists for in the first place — or stay on the same site that
+    // opened them. Everything else is treated as an unwanted popup/redirect (ad network,
+    // gambling affiliate, click-hijack overlay, etc.) and blocked, since those destinations
+    // rotate constantly and can never be fully enumerated in a static blocklist the way
+    // regular ad/tracker resource hosts above can.
+    private val trustedPopupHosts: Set<String> = setOf(
+        "accounts.google.com",
+        "appleid.apple.com",
+        "www.facebook.com",
+        "m.facebook.com",
+        "facebook.com",
+        "github.com",
+        "login.microsoftonline.com",
+        "login.live.com",
+        "login.windows.net",
+        "api.twitter.com",
+        "twitter.com",
+        "x.com",
+        "login.yahoo.com",
+        "discord.com",
+        "login.salesforce.com",
+        "id.atlassian.com",
+        "login.okta.com",
+        "auth0.com"
+    )
+
+    private fun registrableDomain(host: String): String {
+        val parts = host.split(".")
+        return if (parts.size >= 2) parts.takeLast(2).joinToString(".") else host
+    }
+
+    // True when [destination] is either a known identity-provider host above, or shares a
+    // registrable domain with [openerUrl] (the page that called window.open). Anything else
+    // gates onCreateWindow forwarding closed.
+    fun isTrustedPopupDestination(destination: Uri, openerUrl: String?): Boolean {
+        val destHost = destination.host?.lowercase() ?: return false
+        if (trustedPopupHosts.any { destHost == it || destHost.endsWith(".$it") }) return true
+
+        val openerHost = openerUrl?.let { Uri.parse(it).host?.lowercase() }
+        if (openerHost.isNullOrEmpty()) return false
+        return destHost == openerHost || registrableDomain(destHost) == registrableDomain(openerHost)
+    }
+
     // Cosmetic filtering: hides leftover ad containers/iframes served from the page's own
     // domain, so ads that survive the network-level host/path block above (native ads, in-feed
     // sponsored blocks, AMP ad slots) are still hidden. Selectors are deliberately specific
