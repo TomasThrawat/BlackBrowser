@@ -62,6 +62,7 @@ object AdBlocker {
         "rubiconproject.com",
         "smartadserver.com",
         "spotxchange.com",
+        "spotx.tv",
         "teads.tv",
         "triplelift.com",
         "yieldmo.com",
@@ -73,6 +74,15 @@ object AdBlocker {
         "bidswitch.net",
         "yieldlab.net",
         "advertising.com",
+        "adskeeper.co.uk",
+        "smartyads.com",
+        "adition.com",
+        "adyoulike.com",
+        "adtelligent.com",
+        "innovid.com",
+        "freewheel.tv",
+        "springserve.com",
+        "onaudience.com",
 
         // Analytics / tracking / attribution
         "scorecardresearch.com",
@@ -92,6 +102,8 @@ object AdBlocker {
         "flashtalking.com",
         "adtechus.com",
         "zedo.com",
+        "adjust.com",
+        "appsflyer.com",
 
         // Aggressive / pop / redirect ad networks
         "bidvertiser.com",
@@ -102,6 +114,11 @@ object AdBlocker {
         "juicyads.com",
         "trafficjunky.com",
         "revcontent.com",
+        "adsterra.com",
+        "hilltopads.net",
+        "clickadu.com",
+        "trafficstars.com",
+        "exdynsrv.com",
 
         // Mobile / in-app ad SDK endpoints (also fire inside WebView pages)
         "vungle.com",
@@ -124,7 +141,14 @@ object AdBlocker {
         "ads.reddit.com",
         "alb.reddit.com",
         "bat.bing.com",
-        "ads.microsoft.com"
+        "ads.microsoft.com",
+        "mc.yandex.ru",
+        "an.yandex.ru",
+        "px.ads.linkedin.com",
+        "snap.licdn.com",
+        "tr.snapchat.com",
+        "ads.pinterest.com",
+        "ct.pinterest.com"
     )
 
     // Betting/gambling brand block: matched as a host substring so any mirror domain, TLD
@@ -140,7 +164,9 @@ object AdBlocker {
         "/ads/", "/ad/", "/adserver/", "/adserving/", "/pagead/", "/adframe",
         "/advert/", "/advertisement/", "/banners/", "/banner_ads/", "/popads",
         "/popunder", "/adsystem/", "/admanager/", "/adtrack", "/adsync",
-        "/prebid", "/vast.xml", "/vast?", "/openrtb"
+        "/prebid", "/vast.xml", "/vast?", "/openrtb",
+        "/adchoices", "/sponsored-ads/", "/native_ads/", "/aff_click",
+        "/affiliate/click", "/click.php?", "/adserv/"
     )
 
     fun shouldBlock(uri: Uri): Boolean {
@@ -151,4 +177,24 @@ object AdBlocker {
         val fullUrl = uri.toString().lowercase()
         return blockedPatterns.any { fullUrl.contains(it) }
     }
+
+    // Cosmetic filtering: hides leftover ad containers/iframes served from the page's own
+    // domain, so ads that survive the network-level host/path block above (native ads, in-feed
+    // sponsored blocks) are still hidden. Selectors are deliberately specific (ad network names,
+    // "advert", "sponsor-", data-ad-* attributes) rather than a bare "ad" substring, which would
+    // also match unrelated words like "gradient" or "header".
+    fun cosmeticHideCss(): String = """
+        .adsbygoogle, ins.adsbygoogle,
+        [data-ad], [data-ad-slot], [data-ad-client], [data-ad-format],
+        [id*="div-gpt-ad"], [class*="gpt-ad"],
+        [class*="advert"], [id*="advert"],
+        [class*="sponsor-"], [id*="sponsor-"], [class*="-sponsor"],
+        [class*="taboola"], [id*="taboola"],
+        [class*="outbrain"], [id*="outbrain"],
+        [class*="mgid"], [id*="mgid"],
+        iframe[src*="doubleclick.net"], iframe[src*="googlesyndication.com"],
+        iframe[src*="googleadservices.com"], iframe[src*="amazon-adsystem.com"],
+        .ad-slot, .ad-wrapper, .ad_unit, .ad-container, .banner-ad, .banner-ads
+        { display: none !important; visibility: hidden !important; height: 0 !important; }
+    """.trimIndent()
 }
