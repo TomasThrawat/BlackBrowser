@@ -20,6 +20,7 @@ import android.view.KeyEvent
 import android.view.View
 import android.view.inputmethod.EditorInfo
 import android.webkit.CookieManager
+import android.webkit.MimeTypeMap
 import android.webkit.URLUtil
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
@@ -58,6 +59,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnAdBlock: ImageButton
     private lateinit var btnSetDefaultBrowser: ImageButton
     private lateinit var btnHistory: ImageButton
+    private lateinit var btnDownloads: ImageButton
     private lateinit var btnTabsBox: TextView
 
     private val homeUrl = "https://www.google.com"
@@ -123,6 +125,7 @@ class MainActivity : AppCompatActivity() {
         btnAdBlock = findViewById(R.id.btnAdBlock)
         btnSetDefaultBrowser = findViewById(R.id.btnSetDefaultBrowser)
         btnHistory = findViewById(R.id.btnHistory)
+        btnDownloads = findViewById(R.id.btnDownloads)
         btnTabsBox = findViewById(R.id.btnTabsBox)
 
         val btnReload: ImageButton = findViewById(R.id.btnReload)
@@ -150,6 +153,10 @@ class MainActivity : AppCompatActivity() {
 
         btnHistory.setOnClickListener {
             showHistoryDialog()
+        }
+
+        btnDownloads.setOnClickListener {
+            showDownloadsDialog()
         }
 
         btnTabsBox.setOnClickListener {
@@ -489,7 +496,7 @@ class MainActivity : AppCompatActivity() {
         referer: String?
     ) {
         try {
-            val fileName = URLUtil.guessFileName(url, contentDisposition, mimeType)
+            val fileName = resolveDownloadFileName(url, contentDisposition, mimeType)
             val request = DownloadManager.Request(Uri.parse(url)).apply {
                 CookieManager.getInstance().getCookie(url)?.let { addRequestHeader("cookie", it) }
                 addRequestHeader("User-Agent", userAgent)
@@ -526,6 +533,149 @@ class MainActivity : AppCompatActivity() {
                 Toast.makeText(this, getString(R.string.download_permission_denied), Toast.LENGTH_SHORT).show()
             }
         }
+    }
+
+    private fun resolveDownloadFileName(url: String, contentDisposition: String?, mimeType: String?): String {
+        contentDispositionFileName(contentDisposition)?.let { return it }
+
+        val urlName = runCatching { Uri.parse(url) }.getOrNull()
+            ?.lastPathSegment
+            ?.let { Uri.decode(it) }
+            ?.substringBefore('?')
+            ?.takeIf { it.isNotBlank() }
+
+        if (urlName != null) {
+            val ext = urlName.substringAfterLast('.', "")
+            // The URL already carries a real extension (e.g. .apk) -> trust it over a
+            // generic mimeType like application/octet-stream, which is what most servers
+            // send for binary downloads and is what causes files to get renamed to a
+            // meaningless ".bin" instead of keeping their real extension.
+            if (ext.isNotEmpty() && ext.length <= 5 && ext.all { it.isLetterOrDigit() }) {
+                return sanitizeFileName(urlName)
+            }
+            val guessedExt = extensionFromMimeType(mimeType)
+            return sanitizeFileName(if (guessedExt != null) "$urlName.$guessedExt" else urlName)
+        }
+
+        return sanitizeFileName(URLUtil.guessFileName(url, contentDisposition, mimeType))
+    }
+
+    private fun contentDispositionFileName(contentDisposition: String?): String? {
+        if (contentDisposition.isNullOrBlank()) return null
+
+        Regex("filename\\*=(?:UTF-8'')?([^;]+)", RegexOption.IGNORE_CASE)
+            .find(contentDisposition)?.groupValues?.get(1)?.trim()?.trim('"')
+            ?.takeIf { it.isNotBlank() }
+            ?.let { return sanitizeFileName(Uri.decode(it)) }
+
+        Regex("filename=\"?([^\";]+)\"?", RegexOption.IGNORE_CASE)
+            .find(contentDisposition)?.groupValues?.get(1)?.trim()
+            ?.takeIf { it.isNotBlank() }
+            ?.let { return sanitizeFileName(it) }
+
+        return null
+    }
+
+    private fun extensionFromMimeType(mimeType: String?): String? {
+        if (mimeType.isNullOrBlank()) return null
+        val genericTypes = setOf(
+            "application/octet-stream",
+            "application/binary",
+            "application/x-download",
+            "binary/octet-stream"
+        )
+        if (mimeType.lowercase() in genericTypes) return null
+        return MimeTypeMap.getSingleton().getExtensionFromMimeType(mimeType)
+    }
+
+    private fun sanitizeFileName(name: String): String {
+        return name.replace(Regex("[\\\\/:*?\"<>|]"), "_").trim().ifBlank { "download" }
+    }
+
+    // ---- Downloads list ----
+
+    private data class DownloadEntry(
+        val id: Long,
+        val title: String,
+        val status: Int,
+        val localUri: String?,
+        val mimeType: String?
+    )
+
+    private fun queryAllDownloads(): List<DownloadEntry> {
+        val dm = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+        val entries = mutableListOf<DownloadEntry>()
+        dm.query(DownloadManager.Query()).use { cursor ->
+            val idIdx = cursor.getColumnIndex(DownloadManager.COLUMN_ID)
+            val titleIdx = cursor.getColumnIndex(DownloadManager.COLUMN_TITLE)
+            val statusIdx = cursor.getColumnIndex(DownloadManager.COLUMN_STATUS)
+            val uriIdx = cursor.getColumnIndex(DownloadManager.COLUMN_LOCAL_URI)
+            val mimeIdx = cursor.getColumnIndex(DownloadManager.COLUMN_MEDIA_TYPE)
+            while (cursor.moveToNext()) {
+                entries.add(
+                    DownloadEntry(
+                        id = if (idIdx >= 0) cursor.getLong(idIdx) else -1L,
+                        title = if (titleIdx >= 0) cursor.getString(titleIdx) ?: "" else "",
+                        status = if (statusIdx >= 0) cursor.getInt(statusIdx) else -1,
+                        localUri = if (uriIdx >= 0) cursor.getString(uriIdx) else null,
+                        mimeType = if (mimeIdx >= 0) cursor.getString(mimeIdx) else null
+                    )
+                )
+            }
+        }
+        return entries.sortedByDescending { it.id }
+    }
+
+    private fun downloadStatusText(status: Int): String = when (status) {
+        DownloadManager.STATUS_SUCCESSFUL -> getString(R.string.download_status_success)
+        DownloadManager.STATUS_RUNNING -> getString(R.string.download_status_running)
+        DownloadManager.STATUS_PAUSED -> getString(R.string.download_status_paused)
+        DownloadManager.STATUS_PENDING -> getString(R.string.download_status_pending)
+        DownloadManager.STATUS_FAILED -> getString(R.string.download_status_failed)
+        else -> ""
+    }
+
+    private fun openDownloadedFile(entry: DownloadEntry) {
+        if (entry.status != DownloadManager.STATUS_SUCCESSFUL) return
+        try {
+            val dm = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+            val contentUri = dm.getUriForDownloadedFile(entry.id)
+            val type = entry.mimeType ?: contentResolver.getType(contentUri) ?: "*/*"
+            val openIntent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(contentUri, type)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            startActivity(openIntent)
+        } catch (e: Exception) {
+            Toast.makeText(this, getString(R.string.download_open_failed), Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun showDownloadsDialog() {
+        val dialogView = layoutInflater.inflate(R.layout.dialog_downloads, null)
+        val listContainer = dialogView.findViewById<LinearLayout>(R.id.downloadsListContainer)
+        val emptyText = dialogView.findViewById<TextView>(R.id.downloadsEmptyText)
+
+        val dialog = AlertDialog.Builder(this)
+            .setView(dialogView)
+            .create()
+
+        val entries = queryAllDownloads()
+        emptyText.visibility = if (entries.isEmpty()) View.VISIBLE else View.GONE
+        entries.forEach { entry ->
+            val row = layoutInflater.inflate(R.layout.item_download_row, listContainer, false)
+            val rowFileName = row.findViewById<TextView>(R.id.rowFileName)
+            val rowStatus = row.findViewById<TextView>(R.id.rowStatus)
+            rowFileName.text = entry.title.ifBlank { entry.localUri ?: "" }
+            rowStatus.text = downloadStatusText(entry.status)
+            row.setOnClickListener {
+                openDownloadedFile(entry)
+                dialog.dismiss()
+            }
+            listContainer.addView(row)
+        }
+
+        dialog.show()
     }
 
     // ---- Ad block / default browser ----
