@@ -43,6 +43,7 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.webkit.ScriptHandler
 import androidx.webkit.UserAgentMetadata
 import androidx.webkit.WebSettingsCompat
 import androidx.webkit.WebViewCompat
@@ -77,6 +78,10 @@ class MainActivity : AppCompatActivity() {
     // Real per-WebView User-Agent Client Hints, captured once before desktop mode ever touches
     // them, so toggling desktop mode off can restore the true values instead of re-deriving them.
     private val defaultUaMetadata = java.util.WeakHashMap<WebView, UserAgentMetadata>()
+
+    // Holds the per-WebView document-start script that patches navigator.userAgentData
+    // (see applyUserAgentDataOverride below) so it can be removed/replaced on toggle.
+    private val uaScriptHandlers = java.util.WeakHashMap<WebView, ScriptHandler>()
 
     private val activeWebView: WebView
         get() = tabs[currentTabIndex].webView
@@ -174,6 +179,7 @@ class MainActivity : AppCompatActivity() {
             updateDesktopSiteIcon()
             activeWebView.settings.userAgentString = computeUserAgent()
             applyUserAgentMetadata(activeWebView)
+            applyUserAgentDataOverride(activeWebView)
             Toast.makeText(
                 this,
                 if (enabled) getString(R.string.desktop_mode_on_toast) else getString(R.string.desktop_mode_off_toast),
@@ -282,6 +288,7 @@ class MainActivity : AppCompatActivity() {
         // both (and also applies the desktop-site swap below, if that toggle is on).
         wv.settings.userAgentString = computeUserAgent()
         applyUserAgentMetadata(wv)
+        applyUserAgentDataOverride(wv)
 
         wv.setLayerType(View.LAYER_TYPE_HARDWARE, null)
 
@@ -837,6 +844,45 @@ class MainActivity : AppCompatActivity() {
             base
         }
         WebSettingsCompat.setUserAgentMetadata(wv.settings, metadata)
+    }
+
+    // WebView only honors User-Agent Client Hints for apps that send the *default* UA
+    // string; since computeUserAgent() always overrides it (see comment above), the
+    // Sec-CH-UA-Mobile/-Platform headers and navigator.userAgentData in JS keep reporting
+    // the real mobile device to any site that reads them, regardless of what
+    // applyUserAgentMetadata() above just set -- this is why desktop mode only visibly
+    // worked on sites still sniffing the classic UA string (e.g. Google Search), not on
+    // sites gating their layout on Client Hints/userAgentData. Patching userAgentData
+    // client-side via a document-start script is the only reliable way to cover those too.
+    private fun applyUserAgentDataOverride(wv: WebView) {
+        if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) return
+        uaScriptHandlers.remove(wv)?.remove()
+        if (!DesktopModePrefs.isEnabled(this)) return
+
+        val js = """
+            (function() {
+                if (!window.navigator.userAgentData) return;
+                var fake = {
+                    brands: navigator.userAgentData.brands,
+                    mobile: false,
+                    platform: "Windows",
+                    getHighEntropyValues: function() {
+                        return Promise.resolve({
+                            brands: navigator.userAgentData.brands,
+                            mobile: false,
+                            platform: "Windows",
+                            platformVersion: "10.0"
+                        });
+                    }
+                };
+                Object.defineProperty(window.navigator, 'userAgentData', {
+                    get: function() { return fake; },
+                    configurable: true
+                });
+            })();
+        """.trimIndent()
+
+        uaScriptHandlers[wv] = WebViewCompat.addDocumentStartJavaScript(wv, js, setOf("*"))
     }
 
     private fun updateDesktopSiteIcon() {
