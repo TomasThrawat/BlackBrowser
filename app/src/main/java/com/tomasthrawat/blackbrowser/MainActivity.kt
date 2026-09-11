@@ -42,6 +42,7 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.webkit.UserAgentMetadata
 import androidx.webkit.WebSettingsCompat
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
@@ -71,6 +72,10 @@ class MainActivity : AppCompatActivity() {
     private val tabs = mutableListOf<Tab>()
     private var currentTabIndex = 0
     private var nextTabId = 1
+
+    // Real per-WebView User-Agent Client Hints, captured once before desktop mode ever touches
+    // them, so toggling desktop mode off can restore the true values instead of re-deriving them.
+    private val defaultUaMetadata = java.util.WeakHashMap<WebView, UserAgentMetadata>()
 
     private val activeWebView: WebView
         get() = tabs[currentTabIndex].webView
@@ -167,6 +172,7 @@ class MainActivity : AppCompatActivity() {
             DesktopModePrefs.setEnabled(this, enabled)
             updateDesktopSiteIcon()
             activeWebView.settings.userAgentString = computeUserAgent()
+            applyUserAgentMetadata(activeWebView)
             Toast.makeText(
                 this,
                 if (enabled) getString(R.string.desktop_mode_on_toast) else getString(R.string.desktop_mode_off_toast),
@@ -274,6 +280,7 @@ class MainActivity : AppCompatActivity() {
         // and serve a blank/blocked state instead of the button. computeUserAgent() strips
         // both (and also applies the desktop-site swap below, if that toggle is on).
         wv.settings.userAgentString = computeUserAgent()
+        applyUserAgentMetadata(wv)
 
         wv.setLayerType(View.LAYER_TYPE_HARDWARE, null)
 
@@ -796,6 +803,29 @@ class MainActivity : AppCompatActivity() {
     private fun computeUserAgent(): String {
         val base = baseUserAgent()
         return if (DesktopModePrefs.isEnabled(this)) buildDesktopUserAgent(base) else base
+    }
+
+    // The legacy UA string above and User-Agent Client Hints (the Sec-CH-UA-Mobile /
+    // Sec-CH-UA-Platform request headers, and navigator.userAgentData in JS) are two
+    // independent WebView settings. UserAgentMetadata.Builder defaults "mobile" to true
+    // regardless of any custom userAgentString, so a site reading Client Hints instead of (or
+    // together with) the classic UA string still sees a mobile client after the swap above --
+    // this is why desktop mode only worked on flows still driven by classic UA sniffing.
+    private fun applyUserAgentMetadata(wv: WebView) {
+        if (!WebViewFeature.isFeatureSupported(WebViewFeature.USER_AGENT_METADATA)) return
+        val base = defaultUaMetadata.getOrPut(wv) {
+            WebSettingsCompat.getUserAgentMetadata(wv.settings)
+        }
+        val metadata = if (DesktopModePrefs.isEnabled(this)) {
+            UserAgentMetadata.Builder(base)
+                .setMobile(false)
+                .setPlatform("Windows")
+                .setPlatformVersion("10.0")
+                .build()
+        } else {
+            base
+        }
+        WebSettingsCompat.setUserAgentMetadata(wv.settings, metadata)
     }
 
     private fun updateDesktopSiteIcon() {
