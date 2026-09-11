@@ -8676,6 +8676,7 @@ object AdBlocker {
     // .any { } (O(n) per request) -- this list has thousands of entries and shouldBlock()
     // runs on every network request the WebView makes, so the walk-up-the-suffix approach
     // matters for keeping page loads smooth on this device.
+    @Volatile
     private var allBlockedHosts: Set<String> = blockedHosts + extraBlockedHosts
 
     // Extended blocklist merged from 4 external community sources -- HaGeZi Pro mini,
@@ -8685,6 +8686,7 @@ object AdBlocker {
     // app/src/main/assets/ (split into chunks so no single asset gets unwieldy) and loaded
     // into memory at startup below. Same guarantee as the rest of this file: nothing is ever
     // fetched from the network -- the chunks are packaged inside the APK at build time.
+    @Volatile
     private var megaBlockedHosts: Set<String> = emptySet()
 
     private const val MEGA_BLOCKLIST_ASSET_PREFIX = "blocklist_part"
