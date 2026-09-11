@@ -248,6 +248,17 @@ class MainActivity : AppCompatActivity() {
         // allowing a real tap-triggered window.open() (typical "sign in with ..." button) to
         // reach onCreateWindow below.
         wv.settings.javaScriptCanOpenWindowsAutomatically = false
+
+        // Google (and most other OAuth/identity providers) refuse to render "Continue with
+        // Google" / sign-in buttons when the User-Agent identifies the page as running inside
+        // an embedded WebView rather than a full browser -- they detect it via the "; wv)"
+        // token and the "Version/4.0 " prefix Android's default WebView UA always includes,
+        // and serve a blank/blocked state instead of the button. Stripping both makes those
+        // pages see an ordinary mobile Chrome UA and the button renders normally.
+        wv.settings.userAgentString = wv.settings.userAgentString
+            .replace("; wv", "")
+            .replace("Version/4.0 ", "")
+
         wv.setLayerType(View.LAYER_TYPE_HARDWARE, null)
 
         // Pure-black rendering for every site, by default, when the installed WebView build
