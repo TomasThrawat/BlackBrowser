@@ -14,6 +14,8 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
+import android.os.Handler
+import android.os.Looper
 import android.os.Message
 import android.provider.Settings
 import android.view.KeyEvent
@@ -706,8 +708,27 @@ class MainActivity : AppCompatActivity() {
             .setView(dialogView)
             .create()
 
+        val refreshHandler = Handler(Looper.getMainLooper())
+        lateinit var refreshRunnable: Runnable
+        refreshRunnable = Runnable {
+            populateDownloadsList(dialog, listContainer, emptyText)
+            if (dialog.isShowing) refreshHandler.postDelayed(refreshRunnable, 1000L)
+        }
+        dialog.setOnDismissListener { refreshHandler.removeCallbacks(refreshRunnable) }
+
+        populateDownloadsList(dialog, listContainer, emptyText)
+        dialog.show()
+        refreshHandler.postDelayed(refreshRunnable, 1000L)
+    }
+
+    private fun populateDownloadsList(
+        dialog: AlertDialog,
+        listContainer: LinearLayout,
+        emptyText: TextView
+    ) {
         val entries = queryAllDownloads()
         emptyText.visibility = if (entries.isEmpty()) View.VISIBLE else View.GONE
+        listContainer.removeAllViews()
         entries.forEach { entry ->
             val row = layoutInflater.inflate(R.layout.item_download_row, listContainer, false)
             val rowFileName = row.findViewById<TextView>(R.id.rowFileName)
@@ -720,8 +741,6 @@ class MainActivity : AppCompatActivity() {
             }
             listContainer.addView(row)
         }
-
-        dialog.show()
     }
 
     // ---- Ad block / default browser ----
