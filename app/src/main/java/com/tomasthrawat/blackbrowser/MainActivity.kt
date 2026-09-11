@@ -121,6 +121,11 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
+        // Loads the bundled extended blocklist (HaGeZi/1Hosts/oisd/StevenBlack merge, ~321k
+        // domains) from assets. Done on a background thread since it parses a few MB of text;
+        // shouldBlock() keeps working off the smaller starting set until this finishes.
+        Thread { AdBlocker.loadExtendedBlocklist(applicationContext) }.start()
+
         webViewContainer = findViewById(R.id.webViewContainer)
         editUrl = findViewById(R.id.editUrl)
         progressBar = findViewById(R.id.progressBar)
