@@ -8676,7 +8676,47 @@ object AdBlocker {
     // .any { } (O(n) per request) -- this list has thousands of entries and shouldBlock()
     // runs on every network request the WebView makes, so the walk-up-the-suffix approach
     // matters for keeping page loads smooth on this device.
-    private val allBlockedHosts: Set<String> by lazy { blockedHosts + extraBlockedHosts }
+    private var allBlockedHosts: Set<String> = blockedHosts + extraBlockedHosts
+
+    // Extended blocklist merged from 4 external community sources -- HaGeZi Pro mini,
+    // 1Hosts (Lite), oisd big, and StevenBlack (with the gambling extension) -- deduplicated
+    // and compacted (subdomains already covered by a parent domain elsewhere in the merged
+    // set are dropped) down to ~321k unique domains. Bundled as plain-text files under
+    // app/src/main/assets/ (split into chunks so no single asset gets unwieldy) and loaded
+    // into memory at startup below. Same guarantee as the rest of this file: nothing is ever
+    // fetched from the network -- the chunks are packaged inside the APK at build time.
+    private var megaBlockedHosts: Set<String> = emptySet()
+
+    private const val MEGA_BLOCKLIST_ASSET_PREFIX = "blocklist_part"
+    private const val MEGA_BLOCKLIST_ASSET_COUNT = 6
+
+    /**
+     * Loads the bundled extended blocklist (see [megaBlockedHosts]) from assets into memory
+     * and merges it into [allBlockedHosts]. Reads a few MB off disk and builds a HashSet of
+     * ~300k+ entries, so call this from a background thread (e.g. right after onCreate()),
+     * never on the main thread. Safe to call more than once; safe regardless of whether
+     * shouldBlock() has already run with the smaller starting set in the meantime.
+     */
+    fun loadExtendedBlocklist(context: Context) {
+        val merged = HashSet<String>(400_000)
+        for (i in 1..MEGA_BLOCKLIST_ASSET_COUNT) {
+            val name = "$MEGA_BLOCKLIST_ASSET_PREFIX$i.txt"
+            try {
+                context.assets.open(name).bufferedReader().useLines { lines ->
+                    lines.forEach { line ->
+                        val d = line.trim()
+                        if (d.isNotEmpty()) merged.add(d)
+                    }
+                }
+            } catch (e: Exception) {
+                // Missing/corrupt chunk: skip it, keep whatever else loaded successfully.
+            }
+        }
+        if (merged.isNotEmpty()) {
+            megaBlockedHosts = merged
+            allBlockedHosts = allBlockedHosts + megaBlockedHosts
+        }
+    }
 
     private fun hostOrParentMatches(host: String, set: Set<String>): Boolean {
         var h = host
