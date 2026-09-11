@@ -6,4 +6,6 @@
     <color name="adblock_on">#FF00E676</color>
     <color name="adblock_off">#FF757575</color>
     <color name="close_red">#FFFF5252</color>
+    <color name="desktop_on">#FF00E676</color>
+    <color name="desktop_off">#FF757575</color>
 </resources>

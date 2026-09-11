@@ -95,6 +95,15 @@
             android:contentDescription="@string/adblock_desc_on" />
 
         <ImageButton
+            android:id="@+id/btnDesktopSite"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:layout_marginStart="8dp"
+            android:src="@drawable/ic_desktop"
+            android:background="@android:color/transparent"
+            android:contentDescription="@string/desktop_site_desc_off" />
+
+        <ImageButton
             android:id="@+id/btnSetDefaultBrowser"
             android:layout_width="40dp"
             android:layout_height="40dp"

@@ -31,4 +31,13 @@
     <string name="download_status_paused_percent">متوقف مؤقتاً %1$d٪</string>
     <string name="download_status_success">تم التحميل</string>
     <string name="download_status_failed">فشل التحميل</string>
+    <string name="desktop_site_desc_on">وضع سطح المكتب: شغال</string>
+    <string name="desktop_site_desc_off">وضع سطح المكتب: متوقف</string>
+    <string name="desktop_mode_on_toast">هيفتح المواقع بشكل سطح المكتب</string>
+    <string name="desktop_mode_off_toast">رجع لوضع الموبايل العادي</string>
+    <string name="webview_channel_warning_title">الـ WebView مش على قناة الـ Stable</string>
+    <string name="webview_channel_warning_message">التطبيق شغال دلوقتي على %1$s (نسخة %2$s)، وده مش قناة الـ Stable الرسمية. تحب ترجع للنسخة المستقرة؟</string>
+    <string name="webview_open_play_store">افتح Google Play</string>
+    <string name="webview_dismiss">تجاهل</string>
+    <string name="webview_play_store_open_failed">معرفتش افتح Google Play</string>
 </resources>

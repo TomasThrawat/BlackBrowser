@@ -43,6 +43,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.webkit.WebSettingsCompat
+import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import java.io.ByteArrayInputStream
 
@@ -63,6 +64,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnHistory: ImageButton
     private lateinit var btnDownloads: ImageButton
     private lateinit var btnTabsBox: TextView
+    private lateinit var btnDesktopSite: ImageButton
 
     private val homeUrl = "https://www.google.com"
 
@@ -134,6 +136,7 @@ class MainActivity : AppCompatActivity() {
         btnHistory = findViewById(R.id.btnHistory)
         btnDownloads = findViewById(R.id.btnDownloads)
         btnTabsBox = findViewById(R.id.btnTabsBox)
+        btnDesktopSite = findViewById(R.id.btnDesktopSite)
 
         val btnReload: ImageButton = findViewById(R.id.btnReload)
 
@@ -153,6 +156,20 @@ class MainActivity : AppCompatActivity() {
             Toast.makeText(
                 this,
                 if (enabled) getString(R.string.adblock_on_toast) else getString(R.string.adblock_off_toast),
+                Toast.LENGTH_SHORT
+            ).show()
+            activeWebView.reload()
+        }
+
+        updateDesktopSiteIcon()
+        btnDesktopSite.setOnClickListener {
+            val enabled = !DesktopModePrefs.isEnabled(this)
+            DesktopModePrefs.setEnabled(this, enabled)
+            updateDesktopSiteIcon()
+            activeWebView.settings.userAgentString = computeUserAgent()
+            Toast.makeText(
+                this,
+                if (enabled) getString(R.string.desktop_mode_on_toast) else getString(R.string.desktop_mode_off_toast),
                 Toast.LENGTH_SHORT
             ).show()
             activeWebView.reload()
@@ -182,6 +199,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         addNewTab(intent?.dataString ?: homeUrl)
+        checkWebViewChannel()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -253,11 +271,9 @@ class MainActivity : AppCompatActivity() {
         // Google" / sign-in buttons when the User-Agent identifies the page as running inside
         // an embedded WebView rather than a full browser -- they detect it via the "; wv)"
         // token and the "Version/4.0 " prefix Android's default WebView UA always includes,
-        // and serve a blank/blocked state instead of the button. Stripping both makes those
-        // pages see an ordinary mobile Chrome UA and the button renders normally.
-        wv.settings.userAgentString = wv.settings.userAgentString
-            .replace("; wv", "")
-            .replace("Version/4.0 ", "")
+        // and serve a blank/blocked state instead of the button. computeUserAgent() strips
+        // both (and also applies the desktop-site swap below, if that toggle is on).
+        wv.settings.userAgentString = computeUserAgent()
 
         wv.setLayerType(View.LAYER_TYPE_HARDWARE, null)
 
@@ -759,6 +775,92 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // ---- Desktop site / WebView channel ----
+
+    // Freshly re-derives the default UA (rather than reading back whatever a WebView's
+    // settings currently hold) so toggling desktop mode on a tab that already had the
+    // toggle applied once doesn't compound string replacements on top of each other.
+    private fun baseUserAgent(): String =
+        WebSettings.getDefaultUserAgent(this)
+            .replace("; wv", "")
+            .replace("Version/4.0 ", "")
+
+    // Mirrors how Chrome's own "Request desktop site" works: swap only the platform token
+    // and drop the "Mobile" marker, keeping the device's real WebKit/Chrome version intact
+    // so the UA stays truthful about the rendering engine underneath it.
+    private fun buildDesktopUserAgent(mobileUa: String): String =
+        mobileUa
+            .replace(Regex("\\(Linux;[^)]*\\)"), "(Windows NT 10.0; Win64; x64)")
+            .replace(" Mobile ", " ")
+
+    private fun computeUserAgent(): String {
+        val base = baseUserAgent()
+        return if (DesktopModePrefs.isEnabled(this)) buildDesktopUserAgent(base) else base
+    }
+
+    private fun updateDesktopSiteIcon() {
+        val enabled = DesktopModePrefs.isEnabled(this)
+        val color = ContextCompat.getColor(
+            this,
+            if (enabled) R.color.desktop_on else R.color.desktop_off
+        )
+        btnDesktopSite.setColorFilter(color)
+        btnDesktopSite.contentDescription = getString(
+            if (enabled) R.string.desktop_site_desc_on else R.string.desktop_site_desc_off
+        )
+    }
+
+    // Android ships WebView as a separately updatable system component: an app can read
+    // which provider/version is currently active but cannot silently install a new one --
+    // only Play Store, or the user via Settings > Developer options > WebView implementation,
+    // can do that. This checks the active provider and, if it's a pre-release channel (Beta,
+    // Dev, Canary, or a debug/AOSP build) rather than the Stable package, offers a one-tap
+    // link to Stable on Play instead of leaving the app running on a beta WebView.
+    private fun checkWebViewChannel() {
+        val pkg = WebViewCompat.getCurrentWebViewPackage(this) ?: return
+        if (pkg.packageName == STABLE_WEBVIEW_PACKAGE) return
+
+        val prefs = getSharedPreferences("webview_channel_prefs", Context.MODE_PRIVATE)
+        val dismissedKey = "${pkg.packageName}:${pkg.versionName}"
+        if (prefs.getString("dismissed", null) == dismissedKey) return
+
+        AlertDialog.Builder(this)
+            .setTitle(R.string.webview_channel_warning_title)
+            .setMessage(
+                getString(
+                    R.string.webview_channel_warning_message,
+                    pkg.packageName,
+                    pkg.versionName ?: "?"
+                )
+            )
+            .setPositiveButton(R.string.webview_open_play_store) { _, _ ->
+                openPlayStoreForStableWebView()
+            }
+            .setNegativeButton(R.string.webview_dismiss) { _, _ ->
+                prefs.edit().putString("dismissed", dismissedKey).apply()
+            }
+            .show()
+    }
+
+    private fun openPlayStoreForStableWebView() {
+        try {
+            startActivity(
+                Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=$STABLE_WEBVIEW_PACKAGE"))
+            )
+        } catch (e: Exception) {
+            try {
+                startActivity(
+                    Intent(
+                        Intent.ACTION_VIEW,
+                        Uri.parse("https://play.google.com/store/apps/details?id=$STABLE_WEBVIEW_PACKAGE")
+                    )
+                )
+            } catch (e2: Exception) {
+                Toast.makeText(this, getString(R.string.webview_play_store_open_failed), Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
     // ---- Ad block / default browser ----
 
     private fun updateAdBlockIcon() {
@@ -842,5 +944,6 @@ class MainActivity : AppCompatActivity() {
     companion object {
         private const val REQUEST_STORAGE_PERMISSION = 1001
         private const val REQUEST_SET_DEFAULT_BROWSER = 1002
+        private const val STABLE_WEBVIEW_PACKAGE = "com.google.android.webview"
     }
 }

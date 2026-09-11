@@ -22,6 +22,22 @@ object AdBlockPrefs {
     }
 }
 
+object DesktopModePrefs {
+    private const val PREFS_NAME = "desktop_mode_prefs"
+    private const val KEY_ENABLED = "enabled"
+
+    fun isEnabled(context: Context): Boolean =
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getBoolean(KEY_ENABLED, false)
+
+    fun setEnabled(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean(KEY_ENABLED, enabled)
+            .apply()
+    }
+}
+
 /**
  * Offline, host + path based ad/tracker blocker.
  * Fully local: no network calls, no remote list fetch, nothing bundled from the internet at build time.
