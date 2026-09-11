@@ -628,7 +628,9 @@ class MainActivity : AppCompatActivity() {
         val title: String,
         val status: Int,
         val localUri: String?,
-        val mimeType: String?
+        val mimeType: String?,
+        val bytesDownloaded: Long,
+        val bytesTotal: Long
     )
 
     private fun queryAllDownloads(): List<DownloadEntry> {
@@ -640,6 +642,8 @@ class MainActivity : AppCompatActivity() {
             val statusIdx = cursor.getColumnIndex(DownloadManager.COLUMN_STATUS)
             val uriIdx = cursor.getColumnIndex(DownloadManager.COLUMN_LOCAL_URI)
             val mimeIdx = cursor.getColumnIndex(DownloadManager.COLUMN_MEDIA_TYPE)
+            val bytesDownloadedIdx = cursor.getColumnIndex(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR)
+            val bytesTotalIdx = cursor.getColumnIndex(DownloadManager.COLUMN_TOTAL_SIZE_BYTES)
             while (cursor.moveToNext()) {
                 entries.add(
                     DownloadEntry(
@@ -647,7 +651,9 @@ class MainActivity : AppCompatActivity() {
                         title = if (titleIdx >= 0) cursor.getString(titleIdx) ?: "" else "",
                         status = if (statusIdx >= 0) cursor.getInt(statusIdx) else -1,
                         localUri = if (uriIdx >= 0) cursor.getString(uriIdx) else null,
-                        mimeType = if (mimeIdx >= 0) cursor.getString(mimeIdx) else null
+                        mimeType = if (mimeIdx >= 0) cursor.getString(mimeIdx) else null,
+                        bytesDownloaded = if (bytesDownloadedIdx >= 0) cursor.getLong(bytesDownloadedIdx) else 0L,
+                        bytesTotal = if (bytesTotalIdx >= 0) cursor.getLong(bytesTotalIdx) else 0L
                     )
                 )
             }
@@ -655,13 +661,24 @@ class MainActivity : AppCompatActivity() {
         return entries.sortedByDescending { it.id }
     }
 
-    private fun downloadStatusText(status: Int): String = when (status) {
-        DownloadManager.STATUS_SUCCESSFUL -> getString(R.string.download_status_success)
-        DownloadManager.STATUS_RUNNING -> getString(R.string.download_status_running)
-        DownloadManager.STATUS_PAUSED -> getString(R.string.download_status_paused)
-        DownloadManager.STATUS_PENDING -> getString(R.string.download_status_pending)
-        DownloadManager.STATUS_FAILED -> getString(R.string.download_status_failed)
-        else -> ""
+    private fun downloadStatusText(entry: DownloadEntry): String {
+        val percent = if (entry.bytesTotal > 0) {
+            ((entry.bytesDownloaded * 100L) / entry.bytesTotal).toInt().coerceIn(0, 100)
+        } else {
+            -1
+        }
+        return when (entry.status) {
+            DownloadManager.STATUS_SUCCESSFUL -> getString(R.string.download_status_success)
+            DownloadManager.STATUS_RUNNING ->
+                if (percent >= 0) getString(R.string.download_status_running_percent, percent)
+                else getString(R.string.download_status_running)
+            DownloadManager.STATUS_PAUSED ->
+                if (percent >= 0) getString(R.string.download_status_paused_percent, percent)
+                else getString(R.string.download_status_paused)
+            DownloadManager.STATUS_PENDING -> getString(R.string.download_status_pending)
+            DownloadManager.STATUS_FAILED -> getString(R.string.download_status_failed)
+            else -> ""
+        }
     }
 
     private fun openDownloadedFile(entry: DownloadEntry) {
@@ -696,7 +713,7 @@ class MainActivity : AppCompatActivity() {
             val rowFileName = row.findViewById<TextView>(R.id.rowFileName)
             val rowStatus = row.findViewById<TextView>(R.id.rowStatus)
             rowFileName.text = entry.title.ifBlank { entry.localUri ?: "" }
-            rowStatus.text = downloadStatusText(entry.status)
+            rowStatus.text = downloadStatusText(entry)
             row.setOnClickListener {
                 openDownloadedFile(entry)
                 dialog.dismiss()

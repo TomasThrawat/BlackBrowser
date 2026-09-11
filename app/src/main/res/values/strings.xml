@@ -26,7 +26,9 @@
     <string name="downloads_empty">مفيش تحميلات لسه</string>
     <string name="download_status_pending">قيد الانتظار</string>
     <string name="download_status_running">جاري التحميل</string>
+    <string name="download_status_running_percent">جاري التحميل %1$d٪</string>
     <string name="download_status_paused">متوقف مؤقتاً</string>
+    <string name="download_status_paused_percent">متوقف مؤقتاً %1$d٪</string>
     <string name="download_status_success">تم التحميل</string>
     <string name="download_status_failed">فشل التحميل</string>
 </resources>
