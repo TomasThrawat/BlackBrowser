@@ -4,6 +4,7 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.app.DownloadManager
 import android.app.role.RoleManager
+import android.content.ActivityNotFoundException
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -307,6 +308,16 @@ class MainActivity : AppCompatActivity() {
                 val url = request?.url ?: return false
                 if (AdBlockPrefs.isEnabled(this@MainActivity) && AdBlocker.shouldBlock(url)) {
                     return true
+                }
+                // intent:// (Play Store "get the app" / deep-link buttons) and other
+                // non-http(s) schemes (market:, tel:, mailto:, whatsapp:, geo:, ...) mean
+                // nothing to WebView itself -- left alone they fail with
+                // ERR_UNKNOWN_URL_SCHEME instead of reaching the target app or Play Store.
+                if (url.scheme == "intent") {
+                    return handleIntentScheme(url.toString())
+                }
+                if (url.scheme != "http" && url.scheme != "https") {
+                    return handleExternalScheme(url.toString())
                 }
                 return false
             }
@@ -888,6 +899,52 @@ class MainActivity : AppCompatActivity() {
             } catch (e2: Exception) {
                 Toast.makeText(this, getString(R.string.webview_play_store_open_failed), Toast.LENGTH_SHORT).show()
             }
+        }
+    }
+
+    // ---- External / intent scheme links ----
+
+    // Chrome/Android's intent:// syntax lets a web page launch a native app (most often a
+    // Play Store deep link) with a browser fallback baked into the URI itself. WebView has no
+    // built-in handling for it, so without this it fails outright with
+    // net::ERR_UNKNOWN_URL_SCHEME instead of opening the app, its fallback page, or Play Store.
+    private fun handleIntentScheme(url: String): Boolean {
+        val intent = try {
+            Intent.parseUri(url, Intent.URI_INTENT_SCHEME)
+        } catch (e: Exception) {
+            return true // malformed intent:// URI -- nothing safe to load, just swallow it
+        }
+        intent.addCategory(Intent.CATEGORY_BROWSABLE)
+        intent.component = null
+        intent.selector = null
+
+        return try {
+            startActivity(intent)
+            true
+        } catch (e: ActivityNotFoundException) {
+            // Nothing registered for the intent's own target package (e.g. Play Store isn't
+            // installed) -- fall back to the site's explicit browser_fallback_url extra, or
+            // to the http(s) URL the intent:// already encodes via scheme=/host/path/query
+            // (for a Play Store link this reconstructs to the normal play.google.com page).
+            val fallbackUrl = intent.getStringExtra("browser_fallback_url")
+                ?: intent.data?.takeIf { it.scheme == "http" || it.scheme == "https" }?.toString()
+            if (fallbackUrl != null) {
+                activeWebView.loadUrl(fallbackUrl)
+            }
+            true
+        }
+    }
+
+    // Any other scheme WebView can't render itself (market:, tel:, mailto:, whatsapp:, geo:,
+    // etc.) -- hand it to whichever app on the device claims it instead of failing to load it.
+    private fun handleExternalScheme(url: String): Boolean {
+        return try {
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+            true
+        } catch (e: ActivityNotFoundException) {
+            true // no app installed to handle it -- nothing else to do
+        } catch (e: Exception) {
+            true // malformed URI for this scheme -- nothing safe to load
         }
     }
 
