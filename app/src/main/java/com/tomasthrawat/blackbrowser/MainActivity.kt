@@ -267,6 +267,12 @@ class MainActivity : AppCompatActivity() {
         wv.settings.domStorageEnabled = true
         wv.settings.loadWithOverviewMode = true
         wv.settings.useWideViewPort = true
+        // Pinch-to-zoom with two fingers, via WebView's own built-in zoom handling.
+        // displayZoomControls=false hides the on-screen +/- overlay Android draws by
+        // default, so only the finger gesture itself is exposed to the user.
+        wv.settings.setSupportZoom(true)
+        wv.settings.builtInZoomControls = true
+        wv.settings.displayZoomControls = false
         wv.settings.offscreenPreRaster = true
         // Some login/redirect chains still serve a stray http:// sub-resource from an
         // otherwise https:// page; without this WebView silently drops it and the page can
