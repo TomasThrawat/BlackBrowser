@@ -43,6 +43,9 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.webkit.ScriptHandler
 import androidx.webkit.UserAgentMetadata
 import androidx.webkit.WebSettingsCompat
@@ -77,6 +80,13 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnDownloads: ImageButton
     private lateinit var btnTabsBox: TextView
     private lateinit var btnDesktopSite: ImageButton
+    private lateinit var fullscreenContainer: FrameLayout
+
+    // Holds whatever HTML5 <video> hands WebChromeClient.onShowCustomView() while a page's
+    // own fullscreen/expand button is active, plus the callback WebView needs invoked once
+    // fullscreen is left (from the page itself, the back button, or the system).
+    private var fullscreenCustomView: View? = null
+    private var fullscreenCustomViewCallback: WebChromeClient.CustomViewCallback? = null
 
     private val homeUrl = "https://www.google.com"
 
@@ -162,6 +172,7 @@ class MainActivity : AppCompatActivity() {
         btnDownloads = findViewById(R.id.btnDownloads)
         btnTabsBox = findViewById(R.id.btnTabsBox)
         btnDesktopSite = findViewById(R.id.btnDesktopSite)
+        fullscreenContainer = findViewById(R.id.fullscreenContainer)
 
         val btnReload: ImageButton = findViewById(R.id.btnReload)
 
@@ -461,6 +472,35 @@ class MainActivity : AppCompatActivity() {
                 transport.webView = popup
                 resultMsg.sendToTarget()
                 return true
+            }
+
+            // Lets a page's native <video> fullscreen/expand button actually work: HTML5
+            // video fullscreen doesn't reuse the page's normal view hierarchy, it hands
+            // WebView a separate "custom view" to display full-screen -- without this hook
+            // the button has nothing to attach it to and silently does nothing.
+            override fun onShowCustomView(view: View?, callback: CustomViewCallback?) {
+                if (view == null) return
+                if (fullscreenCustomView != null) {
+                    callback?.onCustomViewHidden()
+                    return
+                }
+                fullscreenCustomView = view
+                fullscreenCustomViewCallback = callback
+                fullscreenContainer.addView(
+                    view,
+                    FrameLayout.LayoutParams(
+                        FrameLayout.LayoutParams.MATCH_PARENT,
+                        FrameLayout.LayoutParams.MATCH_PARENT
+                    )
+                )
+                fullscreenContainer.visibility = View.VISIBLE
+                enterImmersiveMode()
+            }
+
+            // The page (or the system back gesture, see onBackPressed) left video
+            // fullscreen -- tear down exactly what onShowCustomView above added.
+            override fun onHideCustomView() {
+                exitFullscreenVideo()
             }
 
             // Lets a website's <input type="file"> (e.g. "upload photo/file") open the
@@ -1304,8 +1344,38 @@ class MainActivity : AppCompatActivity() {
         activeWebView.loadUrl(input)
     }
 
+    // ---- Fullscreen video ----
+
+    private fun exitFullscreenVideo() {
+        val view = fullscreenCustomView ?: return
+        fullscreenContainer.removeView(view)
+        fullscreenContainer.visibility = View.GONE
+        fullscreenCustomView = null
+        fullscreenCustomViewCallback?.onCustomViewHidden()
+        fullscreenCustomViewCallback = null
+        exitImmersiveMode()
+    }
+
+    private fun enterImmersiveMode() {
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        WindowInsetsControllerCompat(window, window.decorView).let { controller ->
+            controller.hide(WindowInsetsCompat.Type.systemBars())
+            controller.systemBarsBehavior =
+                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        }
+    }
+
+    private fun exitImmersiveMode() {
+        WindowCompat.setDecorFitsSystemWindows(window, true)
+        WindowInsetsControllerCompat(window, window.decorView).show(WindowInsetsCompat.Type.systemBars())
+    }
+
     @Suppress("DEPRECATION", "MissingSuperCall")
     override fun onBackPressed() {
+        if (fullscreenCustomView != null) {
+            exitFullscreenVideo()
+            return
+        }
         if (activeWebView.canGoBack()) {
             activeWebView.goBack()
         } else {
