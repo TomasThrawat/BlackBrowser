@@ -327,8 +327,12 @@ class MainActivity : AppCompatActivity() {
 
         // Third-party cookies are off by default per-WebView; most cross-domain sign-in
         // redirects (Google/Facebook/GitHub OAuth callbacks, etc.) depend on them to complete.
-        CookieManager.getInstance().setAcceptCookie(true)
-        CookieManager.getInstance().setAcceptThirdPartyCookies(wv, true)
+        // An incognito tab must not send or accept cookies at all -- otherwise it silently
+        // reuses whatever session is already stored from a regular tab (stays logged in).
+        // switchToTab() re-applies this on every switch too, since the cookie jar itself
+        // is one process-wide store shared by all tabs, not a per-tab jar.
+        CookieManager.getInstance().setAcceptCookie(!isIncognito)
+        CookieManager.getInstance().setAcceptThirdPartyCookies(wv, !isIncognito)
 
         wv.webViewClient = object : WebViewClient() {
             // Stops a same-tab redirect chain (meta-refresh, JS location change, a clicked
@@ -500,9 +504,15 @@ class MainActivity : AppCompatActivity() {
     private fun switchToTab(index: Int) {
         if (index !in tabs.indices) return
         currentTabIndex = index
+        val tab = tabs[index]
+        // Keep the shared cookie jar's accept policy in sync with whichever tab is
+        // actually on screen: incognito must not send/accept cookies (no reused login
+        // session), a regular tab needs cookies back on to stay signed in normally.
+        CookieManager.getInstance().setAcceptCookie(!tab.isIncognito)
+        CookieManager.getInstance().setAcceptThirdPartyCookies(tab.webView, !tab.isIncognito)
         webViewContainer.removeAllViews()
-        webViewContainer.addView(tabs[index].webView)
-        editUrl.setText(tabs[index].url)
+        webViewContainer.addView(tab.webView)
+        editUrl.setText(tab.url)
         updateDefaultBrowserButtonVisibility()
     }
 
