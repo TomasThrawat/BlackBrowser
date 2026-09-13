@@ -48,7 +48,15 @@ import androidx.webkit.UserAgentMetadata
 import androidx.webkit.WebSettingsCompat
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
+import android.provider.MediaStore
+import android.webkit.ValueCallback
+import android.webkit.WebChromeClient.FileChooserParams
+import androidx.core.content.FileProvider
 import java.io.ByteArrayInputStream
+import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class MainActivity : AppCompatActivity() {
 
@@ -56,7 +64,8 @@ class MainActivity : AppCompatActivity() {
         val id: Int,
         val webView: WebView,
         var title: String,
-        var url: String
+        var url: String,
+        val isIncognito: Boolean = false
     )
 
     private lateinit var webViewContainer: FrameLayout
@@ -85,6 +94,11 @@ class MainActivity : AppCompatActivity() {
 
     private val activeWebView: WebView
         get() = tabs[currentTabIndex].webView
+
+    // Uploads triggered by a website's <input type="file"> element go through these.
+    private var fileChooserCallback: ValueCallback<Array<Uri>>? = null
+    private var pendingFileChooserParams: FileChooserParams? = null
+    private var cameraImageUri: Uri? = null
 
     private data class PendingDownload(
         val url: String,
@@ -255,7 +269,7 @@ class MainActivity : AppCompatActivity() {
 
     // ---- Tabs ----
 
-    private fun createWebView(): WebView {
+    private fun createWebView(isIncognito: Boolean = false): WebView {
         val wv = WebView(this)
         wv.layoutParams = FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT,
@@ -278,6 +292,13 @@ class MainActivity : AppCompatActivity() {
         // otherwise https:// page; without this WebView silently drops it and the page can
         // get stuck instead of completing its redirect.
         wv.settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+
+        if (isIncognito) {
+            // Private tab: no disk/RAM cache. Note this WebView engine shares one
+            // cookie/session store across the whole app process, so this gives
+            // "no history + no cache" rather than full multi-profile isolation.
+            wv.settings.cacheMode = WebSettings.LOAD_NO_CACHE
+        }
         // Needed so onCreateWindow below actually gets called for window.open() (sign-in
         // popups, ad pop-unders) instead of the request being silently dropped.
         wv.settings.setSupportMultipleWindows(true)
@@ -343,7 +364,9 @@ class MainActivity : AppCompatActivity() {
                 if (tabs.getOrNull(currentTabIndex)?.webView === view) {
                     editUrl.setText(tab.url)
                 }
-                HistoryStore.add(this@MainActivity, tab.title, tab.url)
+                if (!tab.isIncognito) {
+                    HistoryStore.add(this@MainActivity, tab.title, tab.url)
+                }
 
                 if (AdBlockPrefs.isEnabled(this@MainActivity)) {
                     val css = org.json.JSONObject.quote(AdBlocker.cosmeticHideCss())
@@ -427,6 +450,30 @@ class MainActivity : AppCompatActivity() {
                 resultMsg.sendToTarget()
                 return true
             }
+
+            // Lets a website's <input type="file"> (e.g. "upload photo/file") open the
+            // system file/photo picker, plus a live camera-capture option when a camera
+            // app is available.
+            override fun onShowFileChooser(
+                webView: WebView?,
+                filePathCallback: ValueCallback<Array<Uri>>,
+                fileChooserParams: FileChooserParams?
+            ): Boolean {
+                fileChooserCallback?.onReceiveValue(null)
+                fileChooserCallback = filePathCallback
+
+                if (!hasMediaPermission()) {
+                    pendingFileChooserParams = fileChooserParams
+                    ActivityCompat.requestPermissions(
+                        this@MainActivity,
+                        mediaPermissions(),
+                        REQUEST_MEDIA_PERMISSION
+                    )
+                } else {
+                    launchFileChooser(fileChooserParams)
+                }
+                return true
+            }
         }
 
         wv.setDownloadListener { url, userAgent, contentDisposition, mimeType, _ ->
@@ -436,9 +483,14 @@ class MainActivity : AppCompatActivity() {
         return wv
     }
 
-    private fun addNewTab(url: String = homeUrl) {
-        val wv = createWebView()
-        val tab = Tab(nextTabId++, wv, getString(R.string.new_tab_title), url)
+    private fun addNewTab(url: String = homeUrl, isIncognito: Boolean = false) {
+        val wv = createWebView(isIncognito)
+        val title = if (isIncognito) {
+            getString(R.string.incognito_tab_title)
+        } else {
+            getString(R.string.new_tab_title)
+        }
+        val tab = Tab(nextTabId++, wv, title, url, isIncognito)
         tabs.add(tab)
         wv.loadUrl(url)
         switchToTab(tabs.size - 1)
@@ -461,6 +513,13 @@ class MainActivity : AppCompatActivity() {
         tabs.removeAt(index)
         webViewContainer.removeView(tab.webView)
         tab.webView.stopLoading()
+        if (tab.isIncognito) {
+            // Best-effort private-tab cleanup on close -- see the cacheMode note in
+            // createWebView() about what this can and can't isolate.
+            tab.webView.clearCache(true)
+            tab.webView.clearFormData()
+            tab.webView.clearHistory()
+        }
         tab.webView.destroy()
 
         if (tabs.isEmpty()) {
@@ -484,6 +543,7 @@ class MainActivity : AppCompatActivity() {
         val dialogView = layoutInflater.inflate(R.layout.dialog_tabs, null)
         val listContainer = dialogView.findViewById<LinearLayout>(R.id.tabsListContainer)
         val btnNewTab = dialogView.findViewById<Button>(R.id.btnNewTab)
+        val btnNewIncognitoTab = dialogView.findViewById<Button>(R.id.btnNewIncognitoTab)
 
         val dialog = AlertDialog.Builder(this)
             .setView(dialogView)
@@ -493,8 +553,10 @@ class MainActivity : AppCompatActivity() {
             listContainer.removeAllViews()
             tabs.forEachIndexed { index, tab ->
                 val row = layoutInflater.inflate(R.layout.item_tab_row, listContainer, false)
+                val rowIcon = row.findViewById<android.widget.ImageView>(R.id.rowIncognitoIcon)
                 val rowText = row.findViewById<TextView>(R.id.rowText)
                 val rowClose = row.findViewById<TextView>(R.id.rowClose)
+                rowIcon.visibility = if (tab.isIncognito) View.VISIBLE else View.GONE
                 val label = tab.title.ifBlank { tab.url }
                 rowText.text = if (index == currentTabIndex) "\u25CF $label" else label
                 row.setOnClickListener {
@@ -513,6 +575,11 @@ class MainActivity : AppCompatActivity() {
 
         btnNewTab.setOnClickListener {
             addNewTab()
+            dialog.dismiss()
+        }
+
+        btnNewIncognitoTab.setOnClickListener {
+            addNewTab(isIncognito = true)
             dialog.dismiss()
         }
 
@@ -626,7 +693,105 @@ class MainActivity : AppCompatActivity() {
             } else if (!granted) {
                 Toast.makeText(this, getString(R.string.download_permission_denied), Toast.LENGTH_SHORT).show()
             }
+        } else if (requestCode == REQUEST_MEDIA_PERMISSION) {
+            // Whatever the user picks here, the system file/photo picker launched below
+            // still works -- it runs out-of-process and hands back a Uri the app is
+            // granted regardless of this permission. Denying it only means the app
+            // itself has no standing access to the media store beyond that Uri.
+            val params = pendingFileChooserParams
+            pendingFileChooserParams = null
+            launchFileChooser(params)
         }
+    }
+
+    // ---- File chooser (uploads) ----
+
+    private fun mediaPermissions(): Array<String> {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            arrayOf(Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO)
+        } else {
+            arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+        }
+    }
+
+    private fun hasMediaPermission(): Boolean {
+        return mediaPermissions().all {
+            ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED
+        }
+    }
+
+    private fun launchFileChooser(params: FileChooserParams?) {
+        val contentIntent = params?.createIntent() ?: Intent(Intent.ACTION_GET_CONTENT).apply {
+            type = "*/*"
+            addCategory(Intent.CATEGORY_OPENABLE)
+        }
+        if (contentIntent.type == null) {
+            contentIntent.type = "*/*"
+        }
+
+        val initialIntents = mutableListOf<Intent>()
+        createCameraCaptureIntent()?.let { initialIntents.add(it) }
+
+        val chooser = Intent.createChooser(contentIntent, getString(R.string.file_chooser_title))
+        if (initialIntents.isNotEmpty()) {
+            chooser.putExtra(Intent.EXTRA_INITIAL_INTENTS, initialIntents.toTypedArray())
+        }
+
+        try {
+            startActivityForResult(chooser, REQUEST_FILE_CHOOSER)
+        } catch (e: ActivityNotFoundException) {
+            fileChooserCallback?.onReceiveValue(null)
+            fileChooserCallback = null
+        }
+    }
+
+    private fun createCameraCaptureIntent(): Intent? {
+        val captureIntent = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
+        if (captureIntent.resolveActivity(packageManager) == null) return null
+        return try {
+            val fileName = "capture_${SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())}.jpg"
+            val photoFile = File(cacheDir, fileName)
+            val photoUri = FileProvider.getUriForFile(this, "$packageName.fileprovider", photoFile)
+            cameraImageUri = photoUri
+            captureIntent.putExtra(MediaStore.EXTRA_OUTPUT, photoUri)
+            captureIntent.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+            captureIntent
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != REQUEST_FILE_CHOOSER) return
+
+        val callback = fileChooserCallback
+        fileChooserCallback = null
+        if (callback == null) return
+
+        if (resultCode != RESULT_OK) {
+            callback.onReceiveValue(null)
+            cameraImageUri = null
+            return
+        }
+
+        val results = mutableListOf<Uri>()
+        val clipData = data?.clipData
+        if (clipData != null) {
+            for (i in 0 until clipData.itemCount) {
+                clipData.getItemAt(i).uri?.let { results.add(it) }
+            }
+        } else {
+            val dataUri = data?.data
+            if (dataUri != null) {
+                results.add(dataUri)
+            } else if (cameraImageUri != null) {
+                results.add(cameraImageUri!!)
+            }
+        }
+        cameraImageUri = null
+        callback.onReceiveValue(if (results.isEmpty()) null else results.toTypedArray())
     }
 
     private fun resolveDownloadFileName(url: String, contentDisposition: String?, mimeType: String?): String {
@@ -1128,6 +1293,8 @@ class MainActivity : AppCompatActivity() {
     companion object {
         private const val REQUEST_STORAGE_PERMISSION = 1001
         private const val REQUEST_SET_DEFAULT_BROWSER = 1002
+        private const val REQUEST_FILE_CHOOSER = 1003
+        private const val REQUEST_MEDIA_PERMISSION = 1004
         private const val STABLE_WEBVIEW_PACKAGE = "com.google.android.webview"
     }
 }
