@@ -235,8 +235,16 @@ class MainActivity : AppCompatActivity() {
         intent.dataString?.let { addNewTab(it) }
     }
 
+    override fun onPause() {
+        super.onPause()
+        // The activity losing foreground means no tab is actually being watched right
+        // now either -- same reasoning as pausing a backgrounded tab in switchToTab().
+        tabs.getOrNull(currentTabIndex)?.webView?.onPause()
+    }
+
     override fun onResume() {
         super.onResume()
+        tabs.getOrNull(currentTabIndex)?.webView?.onResume()
         updateDefaultBrowserButtonVisibility()
     }
 
@@ -503,6 +511,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun switchToTab(index: Int) {
         if (index !in tabs.indices) return
+        val previousTab = tabs.getOrNull(currentTabIndex)
         currentTabIndex = index
         val tab = tabs[index]
         // Keep the shared cookie jar's accept policy in sync with whichever tab is
@@ -510,6 +519,14 @@ class MainActivity : AppCompatActivity() {
         // session), a regular tab needs cookies back on to stay signed in normally.
         CookieManager.getInstance().setAcceptCookie(!tab.isIncognito)
         CookieManager.getInstance().setAcceptThirdPartyCookies(tab.webView, !tab.isIncognito)
+        // A tab that isn't the one on screen has no business animating, tracking
+        // location, or running plugins in the background. onPause() is per-WebView
+        // (unlike pauseTimers(), which is global and would also freeze the tab we're
+        // switching INTO), so this only quiets the tab being left behind.
+        if (previousTab != null && previousTab !== tab) {
+            previousTab.webView.onPause()
+        }
+        tab.webView.onResume()
         webViewContainer.removeAllViews()
         webViewContainer.addView(tab.webView)
         editUrl.setText(tab.url)
