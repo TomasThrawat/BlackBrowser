@@ -441,11 +441,6 @@ class MainActivity : AppCompatActivity() {
                 if (resultMsg == null) return false
                 val transport = resultMsg.obj as? WebView.WebViewTransport ?: return false
 
-                // Captured now: a tap-hijacking ad overlay can navigate the opener itself
-                // before the popup's first URL resolves, which would otherwise let a blocked
-                // destination borrow the *new* opener URL as its own trusted origin.
-                val openerUrl = view?.url
-
                 val popup = WebView(this@MainActivity)
                 popup.settings.javaScriptEnabled = true
                 popup.settings.domStorageEnabled = true
@@ -458,10 +453,17 @@ class MainActivity : AppCompatActivity() {
                         popup.destroy()
                         if (destUrl == null) return true
 
+                        // isUserGesture (checked above, before this popup was even created)
+                        // already proves a real tap opened this navigation -- that's exactly
+                        // what separates it from a pop-under, so the only thing left to block
+                        // here is a destination that's an actual known ad/tracker/gambling
+                        // host. Also requiring the destination to share openerUrl's domain (or
+                        // match a small identity-provider allowlist) used to reject any other
+                        // legitimate cross-domain destination too, which is what made ordinary
+                        // "Continue" / "click here to continue" redirect buttons silently do
+                        // nothing.
                         val adBlockOn = AdBlockPrefs.isEnabled(this@MainActivity)
-                        val isUnwantedPopup = adBlockOn &&
-                            (AdBlocker.shouldBlock(destUrl) ||
-                                !AdBlocker.isTrustedPopupDestination(destUrl, openerUrl))
+                        val isUnwantedPopup = adBlockOn && AdBlocker.shouldBlock(destUrl)
                         if (isUnwantedPopup) {
                             return true
                         }
