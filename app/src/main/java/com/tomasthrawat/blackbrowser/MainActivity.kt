@@ -367,6 +367,13 @@ class MainActivity : AppCompatActivity() {
                 request: WebResourceRequest?
             ): Boolean {
                 val url = request?.url ?: return false
+                val isGoogleDebug = url.host?.contains("google.com") == true
+                if (isGoogleDebug) {
+                    debugLog(
+                        "SHOULD_OVERRIDE url=$url mainFrame=${request.isForMainFrame} " +
+                            "cookie=${CookieManager.getInstance().getCookie(url.toString())}"
+                    )
+                }
                 // Same-tab OAuth/2FA redirect chains (Google/Apple/Microsoft/etc. sign-in
                 // callbacks) must never be silently killed by the ad-block host list -- only
                 // the popup path (onCreateWindow) used to be exempted via
@@ -379,6 +386,7 @@ class MainActivity : AppCompatActivity() {
                     AdBlocker.shouldBlock(url) &&
                     !isTrustedTopLevelNav
                 ) {
+                    if (isGoogleDebug) debugLog("BLOCKED_BY_ADBLOCK url=$url")
                     return true
                 }
                 // intent:// (Play Store "get the app" / deep-link buttons) and other
@@ -409,16 +417,22 @@ class MainActivity : AppCompatActivity() {
                 view?.settings?.userAgentString = computeUserAgent(url.host)
                 // See loadUrlHonest's comment: identity-provider hosts must never replay a
                 // cached redirect-chain response, every other host keeps LOAD_DEFAULT.
-                view?.settings?.cacheMode = if (hostNeedsUaSpoof(url.host)) {
-                    WebSettings.LOAD_NO_CACHE
-                } else {
-                    WebSettings.LOAD_DEFAULT
+                val needsFreshLoad = hostNeedsUaSpoof(url.host)
+                view?.settings?.cacheMode = if (needsFreshLoad) WebSettings.LOAD_NO_CACHE else WebSettings.LOAD_DEFAULT
+                if (isGoogleDebug) {
+                    debugLog(
+                        "CONTINUE_IN_WEBVIEW url=$url " +
+                            "cacheMode=${if (needsFreshLoad) "LOAD_NO_CACHE" else "LOAD_DEFAULT"}"
+                    )
                 }
                 return false
             }
 
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
+                if (url?.contains("google.com") == true) {
+                    debugLog("PAGE_FINISHED url=$url cookie=${CookieManager.getInstance().getCookie(url)}")
+                }
                 val tab = tabs.find { it.webView === view } ?: return
                 tab.url = url ?: tab.url
                 tab.title = view?.title?.takeIf { it.isNotBlank() } ?: tab.url
@@ -456,11 +470,17 @@ class MainActivity : AppCompatActivity() {
                 // that don't serve third-party ads on their own domain, so exempting all
                 // traffic to them (not just the top-level navigation) is safe.
                 val isTrustedHost = url != null && AdBlocker.isTrustedPopupDestination(url, null)
-                if (url != null &&
-                    AdBlockPrefs.isEnabled(this@MainActivity) &&
-                    AdBlocker.shouldBlock(url) &&
-                    !isTrustedHost
-                ) {
+                val adBlockOn = AdBlockPrefs.isEnabled(this@MainActivity)
+                val willBlock = url != null && adBlockOn && AdBlocker.shouldBlock(url) && !isTrustedHost
+                if (url?.host?.contains("google.com") == true) {
+                    debugLog(
+                        "INTERCEPT url=$url mainFrame=${request?.isForMainFrame} " +
+                            "adBlockOn=$adBlockOn trustedHost=$isTrustedHost willBlock=$willBlock " +
+                            "cacheMode=${view?.settings?.cacheMode} " +
+                            "cookie=${CookieManager.getInstance().getCookie(url.toString())}"
+                    )
+                }
+                if (willBlock) {
                     return WebResourceResponse("text/plain", "UTF-8", ByteArrayInputStream(ByteArray(0)))
                 }
                 return super.shouldInterceptRequest(view, request)
@@ -1148,6 +1168,19 @@ class MainActivity : AppCompatActivity() {
         return if (DesktopModePrefs.isEnabled(this)) buildDesktopUserAgent(base) else base
     }
 
+    // --- TEMP DEBUG (round 2): diagnosing the stuck "check your phone" 2-Step Verification
+    // screen -- writes to <app>/files/blackbrowser_debug.log
+    // (Android/data/com.tomasthrawat.blackbrowser/files/), remove this whole block plus its
+    // call sites once diagnosed.
+    private fun debugLog(line: String) {
+        try {
+            val file = File(getExternalFilesDir(null), "blackbrowser_debug.log")
+            val ts = android.text.format.DateFormat.format("HH:mm:ss.SSS", System.currentTimeMillis())
+            file.appendText("[$ts] $line\n")
+        } catch (e: Exception) {
+        }
+    }
+
     // WebView.loadUrl() -- unlike a link click or redirect the page itself triggers --
     // never reaches shouldOverrideUrlLoading below, so it would otherwise keep whatever
     // User-Agent the WebView last had. Routing every app-initiated navigation through
@@ -1162,10 +1195,13 @@ class MainActivity : AppCompatActivity() {
         // goes stale and the provider bounces the flow back to itself in a loop. Force a real
         // network hit for exactly these hosts; every other host keeps LOAD_DEFAULT so normal
         // browsing performance is unaffected.
-        settings.cacheMode = if (hostNeedsUaSpoof(host)) {
-            WebSettings.LOAD_NO_CACHE
-        } else {
-            WebSettings.LOAD_DEFAULT
+        val needsFreshLoad = hostNeedsUaSpoof(host)
+        settings.cacheMode = if (needsFreshLoad) WebSettings.LOAD_NO_CACHE else WebSettings.LOAD_DEFAULT
+        if (host?.contains("google.com") == true) {
+            debugLog(
+                "LOAD_URL_HONEST url=$url host=$host " +
+                    "cacheMode=${if (needsFreshLoad) "LOAD_NO_CACHE" else "LOAD_DEFAULT"}"
+            )
         }
         loadUrl(url)
     }
