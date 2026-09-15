@@ -367,13 +367,6 @@ class MainActivity : AppCompatActivity() {
                 request: WebResourceRequest?
             ): Boolean {
                 val url = request?.url ?: return false
-                val isGoogleDebug = url.host?.contains("google.com") == true
-                if (isGoogleDebug) {
-                    debugLog(
-                        "SHOULD_OVERRIDE url=$url mainFrame=${request.isForMainFrame} " +
-                            "cookie=${cookiePresence(url.toString())}"
-                    )
-                }
                 // Same-tab OAuth/2FA redirect chains (Google/Apple/Microsoft/etc. sign-in
                 // callbacks) must never be silently killed by the ad-block host list -- only
                 // the popup path (onCreateWindow) used to be exempted via
@@ -386,7 +379,6 @@ class MainActivity : AppCompatActivity() {
                     AdBlocker.shouldBlock(url) &&
                     !isTrustedTopLevelNav
                 ) {
-                    if (isGoogleDebug) debugLog("BLOCKED_BY_ADBLOCK url=$url")
                     return true
                 }
                 // intent:// (Play Store "get the app" / deep-link buttons) and other
@@ -420,20 +412,11 @@ class MainActivity : AppCompatActivity() {
                 val needsFreshLoad = hostNeedsUaSpoof(url.host) || (view?.cameFromIdentityProvider() == true)
                 view?.settings?.userAgentString = computeUserAgent(url.host, forceSpoof = needsFreshLoad)
                 view?.settings?.cacheMode = if (needsFreshLoad) WebSettings.LOAD_NO_CACHE else WebSettings.LOAD_DEFAULT
-                if (isGoogleDebug) {
-                    debugLog(
-                        "CONTINUE_IN_WEBVIEW url=$url " +
-                            "cacheMode=${if (needsFreshLoad) "LOAD_NO_CACHE" else "LOAD_DEFAULT"}"
-                    )
-                }
                 return false
             }
 
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
-                if (url?.contains("google.com") == true) {
-                    debugLog("PAGE_FINISHED url=$url cookie=${cookiePresence(url)}")
-                }
                 val tab = tabs.find { it.webView === view } ?: return
                 tab.url = url ?: tab.url
                 tab.title = view?.title?.takeIf { it.isNotBlank() } ?: tab.url
@@ -473,19 +456,6 @@ class MainActivity : AppCompatActivity() {
                 val isTrustedHost = url != null && AdBlocker.isTrustedPopupDestination(url, null)
                 val adBlockOn = AdBlockPrefs.isEnabled(this@MainActivity)
                 val willBlock = url != null && adBlockOn && AdBlocker.shouldBlock(url) && !isTrustedHost
-                if (url?.host?.contains("google.com") == true) {
-                    // NOTE: view?.settings (WebSettings) is deliberately NOT read here --
-                    // shouldInterceptRequest runs on a non-UI thread (see Android's own
-                    // shouldInterceptRequest doc note), and touching the WebView's view
-                    // system off that thread crashed the app on launch (home page is
-                    // google.com, so this fires immediately). cacheMode is already logged
-                    // in loadUrlHonest/shouldOverrideUrlLoading, both on the UI thread.
-                    debugLog(
-                        "INTERCEPT url=$url mainFrame=${request?.isForMainFrame} " +
-                            "adBlockOn=$adBlockOn trustedHost=$isTrustedHost willBlock=$willBlock " +
-                            "cookie=${cookiePresence(url.toString())}"
-                    )
-                }
                 if (willBlock) {
                     return WebResourceResponse("text/plain", "UTF-8", ByteArrayInputStream(ByteArray(0)))
                 }
@@ -1202,25 +1172,6 @@ class MainActivity : AppCompatActivity() {
         return if (DesktopModePrefs.isEnabled(this)) buildDesktopUserAgent(base) else base
     }
 
-    // --- TEMP DEBUG (round 2): diagnosing the stuck "check your phone" 2-Step Verification
-    // screen -- writes to <app>/files/blackbrowser_debug.log
-    // (Android/data/com.tomasthrawat.blackbrowser/files/), remove this whole block plus its
-    // call sites once diagnosed.
-    // Diagnostic logs only need to know a cookie exists, not its value -- this file lives in
-    // plain text under external storage, and every call site below used to write the live
-    // session cookie (including auth tokens like SID/HSID/SAPISID) straight into it.
-    private fun cookiePresence(url: String): String =
-        if (CookieManager.getInstance().getCookie(url) != null) "present" else "none"
-
-    private fun debugLog(line: String) {
-        try {
-            val file = File(getExternalFilesDir(null), "blackbrowser_debug.log")
-            val ts = SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(Date(System.currentTimeMillis()))
-            file.appendText("[$ts] $line\n")
-        } catch (e: Exception) {
-        }
-    }
-
     // WebView.loadUrl() -- unlike a link click or redirect the page itself triggers --
     // never reaches shouldOverrideUrlLoading below, so it would otherwise keep whatever
     // User-Agent the WebView last had. Routing every app-initiated navigation through
@@ -1239,12 +1190,6 @@ class MainActivity : AppCompatActivity() {
         val needsFreshLoad = hostNeedsUaSpoof(host) || cameFromIdentityProvider()
         settings.userAgentString = computeUserAgent(host, forceSpoof = needsFreshLoad)
         settings.cacheMode = if (needsFreshLoad) WebSettings.LOAD_NO_CACHE else WebSettings.LOAD_DEFAULT
-        if (host?.contains("google.com") == true) {
-            debugLog(
-                "LOAD_URL_HONEST url=$url host=$host " +
-                    "cacheMode=${if (needsFreshLoad) "LOAD_NO_CACHE" else "LOAD_DEFAULT"}"
-            )
-        }
         loadUrl(url)
     }
 
