@@ -438,15 +438,21 @@ class MainActivity : AppCompatActivity() {
                 request: WebResourceRequest?
             ): WebResourceResponse? {
                 val url = request?.url
-                // Same fix as shouldOverrideUrlLoading above, applied at the resource level:
-                // only exempt the main-frame document request itself, so ad/tracker
-                // sub-resources embedded on a trusted host are still blocked normally.
-                val isTrustedTopLevelNav = url != null && request?.isForMainFrame == true &&
-                    AdBlocker.isTrustedPopupDestination(url, null)
+                // Widened past the original main-frame-only exemption: a same-tab 2FA
+                // "waiting for your confirmation" flow (e.g. Google's own-device approval
+                // step) polls its own host in the background via XHR/fetch -- those are
+                // sub-resource requests (isForMainFrame == false), so the earlier
+                // main-frame-only exemption still let shouldBlock() zero out the poll
+                // response, which looked like the page being stuck "still verifying"
+                // forever even though the top-level page itself loaded fine.
+                // trustedPopupHosts is a small curated allowlist of identity providers
+                // that don't serve third-party ads on their own domain, so exempting all
+                // traffic to them (not just the top-level navigation) is safe.
+                val isTrustedHost = url != null && AdBlocker.isTrustedPopupDestination(url, null)
                 if (url != null &&
                     AdBlockPrefs.isEnabled(this@MainActivity) &&
                     AdBlocker.shouldBlock(url) &&
-                    !isTrustedTopLevelNav
+                    !isTrustedHost
                 ) {
                     return WebResourceResponse("text/plain", "UTF-8", ByteArrayInputStream(ByteArray(0)))
                 }
