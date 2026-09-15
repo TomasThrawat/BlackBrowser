@@ -20,7 +20,9 @@ import android.os.Looper
 import android.os.Message
 import android.provider.Settings
 import android.view.KeyEvent
+import android.view.LayoutInflater
 import android.view.View
+import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.webkit.CookieManager
 import android.webkit.MimeTypeMap
@@ -35,6 +37,7 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageButton
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
@@ -46,6 +49,10 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.recyclerview.widget.DiffUtil
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.ListAdapter
+import androidx.recyclerview.widget.RecyclerView
 import androidx.webkit.ScriptHandler
 import androidx.webkit.UserAgentMetadata
 import androidx.webkit.WebSettingsCompat
@@ -307,7 +314,10 @@ class MainActivity : AppCompatActivity() {
         wv.settings.setSupportZoom(true)
         wv.settings.builtInZoomControls = true
         wv.settings.displayZoomControls = false
-        wv.settings.offscreenPreRaster = true
+        // offscreenPreRaster is intentionally left false here. Per WebSettings docs it should
+        // only be enabled for the WebView actually visible on screen (it raises memory use per
+        // instance); switchToTab() below flips it on/off as tabs become active/inactive instead
+        // of leaving it on for every backgrounded tab's WebView.
         // Some login/redirect chains still serve a stray http:// sub-resource from an
         // otherwise https:// page; without this WebView silently drops it and the page can
         // get stuck instead of completing its redirect.
@@ -424,7 +434,14 @@ class MainActivity : AppCompatActivity() {
                     editUrl.setText(tab.url)
                 }
                 if (!tab.isIncognito) {
-                    HistoryStore.add(this@MainActivity, tab.title, tab.url)
+                    // HistoryStore.add() does a synchronous SharedPreferences read + JSONArray
+                    // parse/rebuild + apply() on every page load; push that off the main thread
+                    // so it can't jank a page-load-heavy session (same pattern as
+                    // loadExtendedBlocklist() above). Snapshot title/url first since `tab` is
+                    // mutable and could change before the thread runs.
+                    val historyTitle = tab.title
+                    val historyUrl = tab.url
+                    Thread { HistoryStore.add(applicationContext, historyTitle, historyUrl) }.start()
                 }
 
                 if (AdBlockPrefs.isEnabled(this@MainActivity)) {
@@ -634,8 +651,11 @@ class MainActivity : AppCompatActivity() {
         // switching INTO), so this only quiets the tab being left behind.
         if (previousTab != null && previousTab !== tab) {
             previousTab.webView.onPause()
+            // Only the WebView actually on screen should pre-rasterize offscreen content.
+            previousTab.webView.settings.offscreenPreRaster = false
         }
         tab.webView.onResume()
+        tab.webView.settings.offscreenPreRaster = true
         webViewContainer.removeAllViews()
         webViewContainer.addView(tab.webView)
         editUrl.setText(tab.url)
@@ -677,7 +697,10 @@ class MainActivity : AppCompatActivity() {
 
     private fun showTabsDialog() {
         val dialogView = layoutInflater.inflate(R.layout.dialog_tabs, null)
-        val listContainer = dialogView.findViewById<LinearLayout>(R.id.tabsListContainer)
+        // tabsListContainer is now a RecyclerView (was a plain LinearLayout rebuilt from
+        // scratch on every change) so opening/closing/switching tabs no longer re-inflates
+        // every row; only the rows that actually changed get rebound, via DiffUtil.
+        val listContainer = dialogView.findViewById<RecyclerView>(R.id.tabsListContainer)
         val btnNewTab = dialogView.findViewById<Button>(R.id.btnNewTab)
         val btnNewIncognitoTab = dialogView.findViewById<Button>(R.id.btnNewIncognitoTab)
 
@@ -685,27 +708,32 @@ class MainActivity : AppCompatActivity() {
             .setView(dialogView)
             .create()
 
+        var tabsAdapter: TabRowAdapter? = null
+
         fun rebuild() {
-            listContainer.removeAllViews()
-            tabs.forEachIndexed { index, tab ->
-                val row = layoutInflater.inflate(R.layout.item_tab_row, listContainer, false)
-                val rowIcon = row.findViewById<android.widget.ImageView>(R.id.rowIncognitoIcon)
-                val rowText = row.findViewById<TextView>(R.id.rowText)
-                val rowClose = row.findViewById<TextView>(R.id.rowClose)
-                rowIcon.visibility = if (tab.isIncognito) View.VISIBLE else View.GONE
-                val label = tab.title.ifBlank { tab.url }
-                rowText.text = if (index == currentTabIndex) "\u25CF $label" else label
-                row.setOnClickListener {
-                    switchToTab(index)
-                    dialog.dismiss()
-                }
-                rowClose.setOnClickListener {
-                    closeTab(index)
-                    if (tabs.isEmpty()) dialog.dismiss() else rebuild()
-                }
-                listContainer.addView(row)
+            val items = tabs.mapIndexed { index, tab ->
+                TabRowItem(
+                    id = tab.id,
+                    label = tab.title.ifBlank { tab.url },
+                    isIncognito = tab.isIncognito,
+                    isActive = index == currentTabIndex
+                )
             }
+            tabsAdapter?.submitList(items)
         }
+
+        tabsAdapter = TabRowAdapter(
+            onRowClick = { index ->
+                switchToTab(index)
+                dialog.dismiss()
+            },
+            onCloseClick = { index ->
+                closeTab(index)
+                if (tabs.isEmpty()) dialog.dismiss() else rebuild()
+            }
+        )
+        listContainer.layoutManager = LinearLayoutManager(this)
+        listContainer.adapter = tabsAdapter
 
         rebuild()
 
@@ -1592,5 +1620,54 @@ class MainActivity : AppCompatActivity() {
         private const val REQUEST_FILE_CHOOSER = 1003
         private const val REQUEST_MEDIA_PERMISSION = 1004
         private const val STABLE_WEBVIEW_PACKAGE = "com.google.android.webview"
+    }
+}
+
+/** Immutable snapshot of one tab row, used to diff the tabs dialog's RecyclerView. */
+private data class TabRowItem(
+    val id: Int,
+    val label: String,
+    val isIncognito: Boolean,
+    val isActive: Boolean
+)
+
+/**
+ * Backs the tabs dialog's list. Replaces the previous approach of clearing and
+ * re-inflating every row on any change (new tab, closed tab, switched tab) -- with
+ * DiffUtil, only the rows that actually changed get rebound.
+ */
+private class TabRowAdapter(
+    private val onRowClick: (Int) -> Unit,
+    private val onCloseClick: (Int) -> Unit
+) : ListAdapter<TabRowItem, TabRowAdapter.ViewHolder>(DIFF_CALLBACK) {
+
+    class ViewHolder(view: View) : RecyclerView.ViewHolder(view) {
+        val icon: ImageView = view.findViewById(R.id.rowIncognitoIcon)
+        val text: TextView = view.findViewById(R.id.rowText)
+        val close: TextView = view.findViewById(R.id.rowClose)
+    }
+
+    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
+        val view = LayoutInflater.from(parent.context)
+            .inflate(R.layout.item_tab_row, parent, false)
+        return ViewHolder(view)
+    }
+
+    override fun onBindViewHolder(holder: ViewHolder, position: Int) {
+        val item = getItem(position)
+        holder.icon.visibility = if (item.isIncognito) View.VISIBLE else View.GONE
+        holder.text.text = if (item.isActive) "\u25CF ${item.label}" else item.label
+        holder.itemView.setOnClickListener { onRowClick(holder.bindingAdapterPosition) }
+        holder.close.setOnClickListener { onCloseClick(holder.bindingAdapterPosition) }
+    }
+
+    companion object {
+        private val DIFF_CALLBACK = object : DiffUtil.ItemCallback<TabRowItem>() {
+            override fun areItemsTheSame(oldItem: TabRowItem, newItem: TabRowItem) =
+                oldItem.id == newItem.id
+
+            override fun areContentsTheSame(oldItem: TabRowItem, newItem: TabRowItem) =
+                oldItem == newItem
+        }
     }
 }

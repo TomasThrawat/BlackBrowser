@@ -45,11 +45,11 @@
         android:layout_height="wrap_content"
         android:maxHeight="400dp">
 
-        <LinearLayout
+        <androidx.recyclerview.widget.RecyclerView
             android:id="@+id/tabsListContainer"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="vertical" />
+            android:nestedScrollingEnabled="false" />
     </ScrollView>
 
 </LinearLayout>
