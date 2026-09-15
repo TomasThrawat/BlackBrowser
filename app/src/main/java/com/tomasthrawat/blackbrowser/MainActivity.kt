@@ -473,10 +473,15 @@ class MainActivity : AppCompatActivity() {
                 val adBlockOn = AdBlockPrefs.isEnabled(this@MainActivity)
                 val willBlock = url != null && adBlockOn && AdBlocker.shouldBlock(url) && !isTrustedHost
                 if (url?.host?.contains("google.com") == true) {
+                    // NOTE: view?.settings (WebSettings) is deliberately NOT read here --
+                    // shouldInterceptRequest runs on a non-UI thread (see Android's own
+                    // shouldInterceptRequest doc note), and touching the WebView's view
+                    // system off that thread crashed the app on launch (home page is
+                    // google.com, so this fires immediately). cacheMode is already logged
+                    // in loadUrlHonest/shouldOverrideUrlLoading, both on the UI thread.
                     debugLog(
                         "INTERCEPT url=$url mainFrame=${request?.isForMainFrame} " +
                             "adBlockOn=$adBlockOn trustedHost=$isTrustedHost willBlock=$willBlock " +
-                            "cacheMode=${view?.settings?.cacheMode} " +
                             "cookie=${CookieManager.getInstance().getCookie(url.toString())}"
                     )
                 }
