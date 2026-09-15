@@ -528,9 +528,7 @@ class MainActivity : AppCompatActivity() {
                         v: WebView?,
                         request: WebResourceRequest?
                     ): Boolean {
-                        val destUrl = request?.url
-                        popup.destroy()
-                        if (destUrl == null) return true
+                        val destUrl = request?.url ?: run { popup.destroy(); return true }
 
                         // isUserGesture (checked above, before this popup was even created)
                         // already proves a real tap opened this navigation -- that's exactly
@@ -544,8 +542,28 @@ class MainActivity : AppCompatActivity() {
                         val adBlockOn = AdBlockPrefs.isEnabled(this@MainActivity)
                         val isUnwantedPopup = adBlockOn && AdBlocker.shouldBlock(destUrl)
                         if (isUnwantedPopup) {
+                            popup.destroy()
                             return true
                         }
+
+                        // Identity-provider chains (Google/Apple/Microsoft/... sign-in) hop
+                        // across several of THEIR OWN hosts -- e.g.
+                        // accounts.google.com/ServiceLogin -> .../v3/signin/challenge/dp (the
+                        // 2-Step Verification device-prompt page) -- before landing on the
+                        // real final destination. Destroying the popup and forwarding only
+                        // the FIRST hop (as this used to do) cuts that chain short and hands
+                        // the main tab an intermediate URL instead of the finished sign-in,
+                        // which is what produced the ServiceLogin <-> www.google.com/?pli=1
+                        // bounce seen in blackbrowser_debug.log. Let it keep following its
+                        // own chain and only forward once it leaves that host.
+                        if (hostNeedsUaSpoof(destUrl.host)) {
+                            v?.settings?.userAgentString =
+                                computeUserAgent(destUrl.host, forceSpoof = true)
+                            v?.settings?.cacheMode = WebSettings.LOAD_NO_CACHE
+                            return false
+                        }
+
+                        popup.destroy()
                         activeWebView.loadUrlHonest(destUrl.toString())
                         return true
                     }
