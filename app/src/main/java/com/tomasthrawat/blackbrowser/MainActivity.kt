@@ -367,6 +367,13 @@ class MainActivity : AppCompatActivity() {
                 request: WebResourceRequest?
             ): Boolean {
                 val url = request?.url ?: return false
+                val isGoogleDebug = url.host?.contains("google.com") == true
+                if (isGoogleDebug) {
+                    debugLog(
+                        "SHOULD_OVERRIDE url=$url mainFrame=${request.isForMainFrame} " +
+                            "cookie=${CookieManager.getInstance().getCookie(url.toString())}"
+                    )
+                }
                 // Same-tab OAuth/2FA redirect chains (Google/Apple/Microsoft/etc. sign-in
                 // callbacks) must never be silently killed by the ad-block host list -- only
                 // the popup path (onCreateWindow) used to be exempted via
@@ -379,6 +386,7 @@ class MainActivity : AppCompatActivity() {
                     AdBlocker.shouldBlock(url) &&
                     !isTrustedTopLevelNav
                 ) {
+                    if (isGoogleDebug) debugLog("BLOCKED_BY_ADBLOCK url=$url")
                     return true
                 }
                 // intent:// (Play Store "get the app" / deep-link buttons) and other
@@ -407,11 +415,15 @@ class MainActivity : AppCompatActivity() {
                 // app-initiated loads), so the UA has to be corrected for the new
                 // destination here too, before letting the load through.
                 view?.settings?.userAgentString = computeUserAgent(url.host)
+                if (isGoogleDebug) debugLog("CONTINUE_IN_WEBVIEW url=$url")
                 return false
             }
 
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
+                if (url?.contains("google.com") == true) {
+                    debugLog("PAGE_FINISHED url=$url cookie=${CookieManager.getInstance().getCookie(url)}")
+                }
                 val tab = tabs.find { it.webView === view } ?: return
                 tab.url = url ?: tab.url
                 tab.title = view?.title?.takeIf { it.isNotBlank() } ?: tab.url
@@ -1411,9 +1423,22 @@ class MainActivity : AppCompatActivity() {
     // to hand a URL to another app instead of rendering it. If it resolves to some other
     // installed app (not this browser, and not the bare system chooser -- package "android"
     // -- which means no single verified/preferred handler exists), that's the OS confirming
+    // --- TEMP DEBUG: diagnosing the Google sign-in loop -- writes to
+    // <app>/files/blackbrowser_debug.log (Android/data/com.tomastharwat.blackbrowser/files/),
+    // remove this whole block plus its call sites once diagnosed.
+    private fun debugLog(line: String) {
+        try {
+            val file = File(getExternalFilesDir(null), "blackbrowser_debug.log")
+            val ts = android.text.format.DateFormat.format("HH:mm:ss.SSS", System.currentTimeMillis())
+            file.appendText("[$ts] $line\n")
+        } catch (e: Exception) {
+        }
+    }
+
     // a real app claims this exact URL, so send it there via startActivity() exactly like
     // handleIntentScheme/handleExternalScheme above do for other schemes.
     private fun tryHandOffToAppLink(url: Uri): Boolean {
+        val isGoogleDebug = url.host?.contains("google.com") == true
         val intent = Intent(Intent.ACTION_VIEW, url).addCategory(Intent.CATEGORY_BROWSABLE)
         val resolved = try {
             packageManager.resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY)
@@ -1422,6 +1447,7 @@ class MainActivity : AppCompatActivity() {
         } ?: return false
 
         val targetPackage = resolved.activityInfo?.packageName
+        if (isGoogleDebug) debugLog("APPLINK_RESOLVE url=$url target=$targetPackage")
         if (targetPackage == null || targetPackage == packageName || targetPackage == "android") {
             return false
         }
@@ -1429,8 +1455,10 @@ class MainActivity : AppCompatActivity() {
         return try {
             intent.setPackage(targetPackage)
             startActivity(intent)
+            if (isGoogleDebug) debugLog("APPLINK_HANDOFF url=$url target=$targetPackage result=success")
             true
         } catch (e: ActivityNotFoundException) {
+            if (isGoogleDebug) debugLog("APPLINK_HANDOFF url=$url target=$targetPackage result=failed")
             false
         }
     }
