@@ -413,11 +413,12 @@ class MainActivity : AppCompatActivity() {
                 }
                 // Link clicks and JS/meta redirects land here (unlike loadUrlHonest's
                 // app-initiated loads), so the UA has to be corrected for the new
-                // destination here too, before letting the load through.
-                view?.settings?.userAgentString = computeUserAgent(url.host)
-                // See loadUrlHonest's comment: identity-provider hosts must never replay a
-                // cached redirect-chain response, every other host keeps LOAD_DEFAULT.
+                // destination here too, before letting the load through. See loadUrlHonest's
+                // comment: identity-provider hosts -- and the hop right after one -- must keep
+                // the disguised UA and never replay a cached redirect-chain response; every
+                // other host keeps the plain UA and LOAD_DEFAULT.
                 val needsFreshLoad = hostNeedsUaSpoof(url.host) || (view?.cameFromIdentityProvider() == true)
+                view?.settings?.userAgentString = computeUserAgent(url.host, forceSpoof = needsFreshLoad)
                 view?.settings?.cacheMode = if (needsFreshLoad) WebSettings.LOAD_NO_CACHE else WebSettings.LOAD_DEFAULT
                 if (isGoogleDebug) {
                     debugLog(
@@ -1164,9 +1165,9 @@ class MainActivity : AppCompatActivity() {
     // `host` is the destination of the navigation about to happen (null when not yet
     // known, e.g. right after WebView creation, before the first load) -- the disguise
     // is only applied when that host actually needs it (see uaSpoofHosts above).
-    private fun baseUserAgent(host: String?): String {
+    private fun baseUserAgent(host: String?, forceSpoof: Boolean = false): String {
         val default = WebSettings.getDefaultUserAgent(this)
-        if (!hostNeedsUaSpoof(host)) return default
+        if (!hostNeedsUaSpoof(host) && !forceSpoof) return default
         return default
             .replace("; wv", "")
             .replace("Version/4.0 ", "")
@@ -1178,8 +1179,8 @@ class MainActivity : AppCompatActivity() {
     private fun buildDesktopUserAgent(mobileUa: String): String =
         mobileUa.replace(" Mobile ", " ")
 
-    private fun computeUserAgent(host: String? = null): String {
-        val base = baseUserAgent(host)
+    private fun computeUserAgent(host: String? = null, forceSpoof: Boolean = false): String {
+        val base = baseUserAgent(host, forceSpoof)
         return if (DesktopModePrefs.isEnabled(this)) buildDesktopUserAgent(base) else base
     }
 
@@ -1209,14 +1210,16 @@ class MainActivity : AppCompatActivity() {
     // actual destination instead of leaking over from whatever page was open before.
     private fun WebView.loadUrlHonest(url: String) {
         val host = runCatching { Uri.parse(url).host }.getOrNull()
-        settings.userAgentString = computeUserAgent(host)
-        // Identity-provider hosts (uaSpoofHosts) serve short-lived state tokens (e.g. Google's
-        // sign-in "dsh" param) on every redirect hop; WebView's default cache mode can replay a
-        // cached response for one of those hops instead of hitting the network, so the token
-        // goes stale and the provider bounces the flow back to itself in a loop. Force a real
-        // network hit for exactly these hosts; every other host keeps LOAD_DEFAULT so normal
-        // browsing performance is unaffected.
+        // Identity-provider hosts (uaSpoofHosts) -- and the hop right after one -- serve
+        // short-lived state tokens (e.g. Google's sign-in "dsh" param) on every redirect hop.
+        // Two things had to stay consistent for exactly these hops: no cached response (a
+        // stale one makes the token look expired) and the same disguised UA the identity
+        // provider itself saw (dropping back to the plain WebView UA one hop later reads, to
+        // the server, as a different client mid-flow). Getting either wrong on its own was
+        // enough to make the provider bounce the flow back to itself in a loop; every other
+        // host keeps LOAD_DEFAULT and the plain UA so normal browsing is unaffected.
         val needsFreshLoad = hostNeedsUaSpoof(host) || cameFromIdentityProvider()
+        settings.userAgentString = computeUserAgent(host, forceSpoof = needsFreshLoad)
         settings.cacheMode = if (needsFreshLoad) WebSettings.LOAD_NO_CACHE else WebSettings.LOAD_DEFAULT
         if (host?.contains("google.com") == true) {
             debugLog(
