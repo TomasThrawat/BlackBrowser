@@ -367,7 +367,18 @@ class MainActivity : AppCompatActivity() {
                 request: WebResourceRequest?
             ): Boolean {
                 val url = request?.url ?: return false
-                if (AdBlockPrefs.isEnabled(this@MainActivity) && AdBlocker.shouldBlock(url)) {
+                // Same-tab OAuth/2FA redirect chains (Google/Apple/Microsoft/etc. sign-in
+                // callbacks) must never be silently killed by the ad-block host list -- only
+                // the popup path (onCreateWindow) used to be exempted via
+                // isTrustedPopupDestination(); this top-level navigation path had no such
+                // exemption, so a false-positive match on the ~321k-domain merged blocklist
+                // during a real sign-in redirect looked like "the page never comes back".
+                val isTrustedTopLevelNav = request.isForMainFrame &&
+                    AdBlocker.isTrustedPopupDestination(url, null)
+                if (AdBlockPrefs.isEnabled(this@MainActivity) &&
+                    AdBlocker.shouldBlock(url) &&
+                    !isTrustedTopLevelNav
+                ) {
                     return true
                 }
                 // intent:// (Play Store "get the app" / deep-link buttons) and other
@@ -427,7 +438,16 @@ class MainActivity : AppCompatActivity() {
                 request: WebResourceRequest?
             ): WebResourceResponse? {
                 val url = request?.url
-                if (url != null && AdBlockPrefs.isEnabled(this@MainActivity) && AdBlocker.shouldBlock(url)) {
+                // Same fix as shouldOverrideUrlLoading above, applied at the resource level:
+                // only exempt the main-frame document request itself, so ad/tracker
+                // sub-resources embedded on a trusted host are still blocked normally.
+                val isTrustedTopLevelNav = url != null && request?.isForMainFrame == true &&
+                    AdBlocker.isTrustedPopupDestination(url, null)
+                if (url != null &&
+                    AdBlockPrefs.isEnabled(this@MainActivity) &&
+                    AdBlocker.shouldBlock(url) &&
+                    !isTrustedTopLevelNav
+                ) {
                     return WebResourceResponse("text/plain", "UTF-8", ByteArrayInputStream(ByteArray(0)))
                 }
                 return super.shouldInterceptRequest(view, request)
