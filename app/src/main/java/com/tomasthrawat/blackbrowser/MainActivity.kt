@@ -514,7 +514,16 @@ class MainActivity : AppCompatActivity() {
                 val isTrustedHost = url != null && AdBlocker.isTrustedPopupDestination(url, null)
                 val adBlockOn = AdBlockPrefs.isEnabled(this@MainActivity)
                 val willBlock = url != null && adBlockOn && AdBlocker.shouldBlock(url) && !isTrustedHost
+                // TEMP DEBUG -- shouldOverrideUrlLoading only fires for top-level navigation,
+                // so it never saw a Gmail sub-resource (XHR/fetch/script) getting zeroed out
+                // right here; that blind spot is why blackbrowser_debug.log came up empty.
+                if (url?.host?.contains("google.com") == true) {
+                    debugLog("shouldInterceptRequest $url mainFrame=${request?.isForMainFrame} willBlock=$willBlock")
+                }
                 if (willBlock) {
+                    if (url?.host?.contains("google.com") == true) {
+                        debugLog("  -> BLOCKED (resource) by adblock: $url")
+                    }
                     return WebResourceResponse("text/plain", "UTF-8", ByteArrayInputStream(ByteArray(0)))
                 }
                 return super.shouldInterceptRequest(view, request)
