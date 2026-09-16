@@ -1149,6 +1149,12 @@ class MainActivity : AppCompatActivity() {
     // page on ordinary searches, not just on sign-in flows.
     private val uaSpoofHosts: Set<String> = setOf(
         "accounts.google.com",
+        // Gmail's own web app (google.com/gmail -> mail.google.com) blocks/limits
+        // embedded WebViews the same "; wv" / "Version/4.0 " way accounts.google.com's
+        // sign-in page does -- it is a separate host from accounts.google.com and from
+        // www.google.com/search, so it needed its own entry here rather than being
+        // covered by either of those.
+        "mail.google.com",
         "appleid.apple.com",
         "www.facebook.com",
         "m.facebook.com",
