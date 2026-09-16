@@ -44,4 +44,6 @@
     <string name="incognito_tab_title">تبويب خفي</string>
     <string name="incognito_tab_desc">تبويب تصفح خفي</string>
     <string name="file_chooser_title">اختيار ملف</string>
+    <string name="save_image_dialog_title">تحميل الصورة؟</string>
+    <string name="save_image_action">تحميل</string>
 </resources>

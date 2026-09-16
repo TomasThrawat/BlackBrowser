@@ -618,6 +618,27 @@ class MainActivity : AppCompatActivity() {
             startDownload(url, userAgent, contentDisposition, mimeType, wv.url)
         }
 
+        // Press-and-hold on an <img> (e.g. a photo in a gallery/photos page) offers to
+        // download it, the same way a real browser's long-press context menu does --
+        // WebView only exposes this via HitTestResult, it doesn't wire up any UI for it
+        // on its own. IMAGE_TYPE covers a plain <img>; SRC_IMAGE_ANCHOR_TYPE covers an
+        // <img> that's also wrapped in a link (the common "tap photo to enlarge" markup),
+        // where it's the image itself that should download, not the link destination.
+        wv.setOnLongClickListener {
+            val result = wv.hitTestResult
+            val imageUrl = when (result.type) {
+                WebView.HitTestResult.IMAGE_TYPE,
+                WebView.HitTestResult.SRC_IMAGE_ANCHOR_TYPE -> result.extra
+                else -> null
+            }
+            if (imageUrl != null) {
+                confirmDownloadImage(wv, imageUrl)
+                true
+            } else {
+                false
+            }
+        }
+
         return wv
     }
 
@@ -788,6 +809,23 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ---- Downloads ----
+
+    // Shown on a long-press over an <img>; the actual download reuses startDownload()
+    // below so it goes through the same storage-permission / DownloadManager path as
+    // every other download in the app instead of a separate one-off code path.
+    private fun confirmDownloadImage(wv: WebView, imageUrl: String) {
+        val guessedMime = imageUrl.substringAfterLast('.', "").substringBefore('?')
+            .takeIf { it.isNotBlank() }
+            ?.let { MimeTypeMap.getSingleton().getMimeTypeFromExtension(it.lowercase()) }
+            ?: "image/*"
+        AlertDialog.Builder(this)
+            .setTitle(R.string.save_image_dialog_title)
+            .setPositiveButton(R.string.save_image_action) { _, _ ->
+                startDownload(imageUrl, wv.settings.userAgentString, "", guessedMime, wv.url)
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
 
     private fun startDownload(
         url: String,
