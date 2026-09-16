@@ -28,6 +28,8 @@ import android.webkit.CookieManager
 import android.webkit.MimeTypeMap
 import android.webkit.URLUtil
 import android.webkit.WebChromeClient
+import android.graphics.Bitmap
+import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
@@ -377,6 +379,9 @@ class MainActivity : AppCompatActivity() {
                 request: WebResourceRequest?
             ): Boolean {
                 val url = request?.url ?: return false
+                if (url.host?.contains("google.com") == true) {
+                    debugLog("shouldOverrideUrlLoading ${url} mainFrame=${request.isForMainFrame}")
+                }
                 // Same-tab OAuth/2FA redirect chains (Google/Apple/Microsoft/etc. sign-in
                 // callbacks) must never be silently killed by the ad-block host list -- only
                 // the popup path (onCreateWindow) used to be exempted via
@@ -389,6 +394,9 @@ class MainActivity : AppCompatActivity() {
                     AdBlocker.shouldBlock(url) &&
                     !isTrustedTopLevelNav
                 ) {
+                    if (url.host?.contains("google.com") == true) {
+                        debugLog("  -> BLOCKED by adblock: $url")
+                    }
                     return true
                 }
                 // intent:// (Play Store "get the app" / deep-link buttons) and other
@@ -422,11 +430,44 @@ class MainActivity : AppCompatActivity() {
                 val needsFreshLoad = hostNeedsUaSpoof(url.host) || (view?.cameFromIdentityProvider() == true)
                 view?.settings?.userAgentString = computeUserAgent(url.host, forceSpoof = needsFreshLoad)
                 view?.settings?.cacheMode = if (needsFreshLoad) WebSettings.LOAD_NO_CACHE else WebSettings.LOAD_DEFAULT
+                if (url.host?.contains("google.com") == true) {
+                    debugLog("  -> ALLOWED: $url needsFreshLoad=$needsFreshLoad")
+                }
                 return false
+            }
+
+            override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
+                super.onPageStarted(view, url, favicon)
+                if (url?.contains("google.com") == true) debugLog("onPageStarted $url")
+            }
+
+            override fun onReceivedHttpError(
+                view: WebView?,
+                request: WebResourceRequest?,
+                errorResponse: WebResourceResponse?
+            ) {
+                super.onReceivedHttpError(view, request, errorResponse)
+                val u = request?.url
+                if (request?.isForMainFrame == true && u?.host?.contains("google.com") == true) {
+                    debugLog("HTTP ERROR ${errorResponse?.statusCode} on $u")
+                }
+            }
+
+            override fun onReceivedError(
+                view: WebView?,
+                request: WebResourceRequest?,
+                error: WebResourceError?
+            ) {
+                super.onReceivedError(view, request, error)
+                val u = request?.url
+                if (request?.isForMainFrame == true && u?.host?.contains("google.com") == true) {
+                    debugLog("NETWORK ERROR ${error?.errorCode} ${error?.description} on $u")
+                }
             }
 
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
+                if (url?.contains("google.com") == true) debugLog("onPageFinished $url")
                 val tab = tabs.find { it.webView === view } ?: return
                 tab.url = url ?: tab.url
                 tab.title = view?.title?.takeIf { it.isNotBlank() } ?: tab.url
@@ -813,6 +854,20 @@ class MainActivity : AppCompatActivity() {
     // Shown on a long-press over an <img>; the actual download reuses startDownload()
     // below so it goes through the same storage-permission / DownloadManager path as
     // every other download in the app instead of a separate one-off code path.
+    // TEMP DEBUG -- for the "Gmail bounces back to search" investigation only; remove
+    // once diagnosed (same one-off pattern as the earlier blackbrowser_debug.log session).
+    // Pull with: adb exec-out run-as com.tomasthrawat.blackbrowser cat files/blackbrowser_debug.log
+    // android.text.format.DateFormat.format() doesn't support the 'S' (millis) pattern
+    // letter, hence SimpleDateFormat here (same fix as last time).
+    private fun debugLog(message: String) {
+        try {
+            val ts = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US).format(Date())
+            File(filesDir, "blackbrowser_debug.log").appendText("$ts $message\n")
+        } catch (e: Exception) {
+            // best-effort only
+        }
+    }
+
     private fun confirmDownloadImage(wv: WebView, imageUrl: String) {
         val guessedMime = imageUrl.substringAfterLast('.', "").substringBefore('?')
             .takeIf { it.isNotBlank() }
