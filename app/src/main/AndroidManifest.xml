@@ -15,6 +15,16 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:label="@string/app_name"
         android:theme="@style/Theme.BlackBrowser">
+
+        <!-- WebView's built-in Safe Browsing defaults to enabled and does a network
+             lookup to Google for every navigated host before the page loads. This app
+             already blocks malicious/ad hosts locally (see AdBlock.kt) without ever
+             touching the network, so the extra round-trip + Google lookup is disabled
+             here to keep that guarantee and avoid the added per-navigation latency. -->
+        <meta-data
+            android:name="android.webkit.WebView.EnableSafeBrowsing"
+            android:value="false" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"
