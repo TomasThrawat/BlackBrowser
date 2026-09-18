@@ -25,6 +25,14 @@
             android:name="android.webkit.WebView.EnableSafeBrowsing"
             android:value="false" />
 
+        <!-- WebView can upload anonymous diagnostic usage metrics to Google on a
+             per-app basis if the device owner previously consented to diagnostics
+             collection at the OS level. Opting out here keeps that consistent with
+             the app's own no-network-telemetry design regardless of that OS setting. -->
+        <meta-data
+            android:name="android.webkit.WebView.MetricsOptOut"
+            android:value="true" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"
