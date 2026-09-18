@@ -8835,9 +8835,32 @@ object AdBlocker {
         "auth0.com"
     )
 
+    // Second-level public suffixes where the naive "last two labels" rule would merge
+    // unrelated sites under the same registrable domain (e.g. "evil.co.uk" and "bank.co.uk"
+    // both reducing to "co.uk") and wrongly grant them the same-site popup trust below.
+    // Not an exhaustive public-suffix list -- just the patterns common enough that getting
+    // this wrong would actually widen the popup-trust check in practice.
+    private val multiLabelSuffixes: Set<String> = setOf(
+        "co.uk", "org.uk", "gov.uk", "ac.uk", "me.uk", "ltd.uk", "plc.uk",
+        "co.jp", "ne.jp", "or.jp", "ac.jp",
+        "com.au", "net.au", "org.au", "gov.au", "edu.au",
+        "co.in", "net.in", "org.in", "gov.in", "co.za", "org.za",
+        "com.eg", "net.eg", "org.eg", "gov.eg", "edu.eg",
+        "com.br", "com.mx", "com.tr", "com.cn", "com.hk", "com.sg", "com.pk",
+        "co.id", "co.kr", "co.nz", "co.il",
+        "github.io", "gitlab.io", "netlify.app", "vercel.app", "web.app",
+        "pages.dev", "herokuapp.com", "blogspot.com", "s3.amazonaws.com"
+    )
+
     private fun registrableDomain(host: String): String {
         val parts = host.split(".")
-        return if (parts.size >= 2) parts.takeLast(2).joinToString(".") else host
+        if (parts.size < 2) return host
+        val lastTwo = parts.takeLast(2).joinToString(".")
+        return if (parts.size >= 3 && multiLabelSuffixes.contains(lastTwo)) {
+            parts.takeLast(3).joinToString(".")
+        } else {
+            lastTwo
+        }
     }
 
     // True when [destination] is either a known identity-provider host above, or shares a
