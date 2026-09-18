@@ -68,6 +68,7 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.Executors
 
 class MainActivity : AppCompatActivity() {
 
@@ -127,6 +128,9 @@ class MainActivity : AppCompatActivity() {
     )
 
     private var pendingDownload: PendingDownload? = null
+
+    // Serialize history writes so rapid navigation cannot race SharedPreferences read-modify-write cycles.
+    private val historyExecutor = Executors.newSingleThreadExecutor()
 
     private val downloadCompleteReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -291,8 +295,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        historyExecutor.shutdownNow()
         super.onDestroy()
         tabs.forEach { it.webView.destroy() }
+        inFlightAppNavigationUrls.clear()
     }
 
     // ---- Tabs ----
@@ -459,15 +465,27 @@ class MainActivity : AppCompatActivity() {
                 error: WebResourceError?
             ) {
                 super.onReceivedError(view, request, error)
-                if (request?.isForMainFrame == true && request.url.toString() == inFlightAppNavigationUrl) {
-                    inFlightAppNavigationUrl = null
+                if (request?.isForMainFrame == true && view != null &&
+                    inFlightAppNavigationUrls[view] == request.url.toString()
+                ) {
+                    inFlightAppNavigationUrls.remove(view)
+                }
+            }
+
+            override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
+                super.onPageStarted(view, url, favicon)
+                // Once Chromium has actually started the main-frame navigation, the original
+                // app dispatch has happened. Release the guard so a later deliberate navigation
+                // is not blocked, including redirect chains that never finish on the original URL.
+                if (view != null && url != null && inFlightAppNavigationUrls[view] == url) {
+                    inFlightAppNavigationUrls.remove(view)
                 }
             }
 
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
-                if (url == inFlightAppNavigationUrl) {
-                    inFlightAppNavigationUrl = null
+                if (view != null && url != null && inFlightAppNavigationUrls[view] == url) {
+                    inFlightAppNavigationUrls.remove(view)
                 }
                 val tab = tabs.find { it.webView === view } ?: return
                 tab.url = url ?: tab.url
@@ -483,7 +501,7 @@ class MainActivity : AppCompatActivity() {
                     // mutable and could change before the thread runs.
                     val historyTitle = tab.title
                     val historyUrl = tab.url
-                    Thread { HistoryStore.add(applicationContext, historyTitle, historyUrl) }.start()
+                    historyExecutor.execute { HistoryStore.add(applicationContext, historyTitle, historyUrl) }
                 }
 
                 if (AdBlockPrefs.isEnabled(this@MainActivity)) {
@@ -1302,11 +1320,11 @@ class MainActivity : AppCompatActivity() {
     // Prevents one user action from dispatching the exact same top-level URL twice
     // while the first navigation is still in flight. This does not block redirects,
     // subresources, or a deliberate new navigation after the current one finishes.
-    private var inFlightAppNavigationUrl: String? = null
+    private val inFlightAppNavigationUrls = java.util.WeakHashMap<WebView, String>()
 
     private fun WebView.loadUrlHonest(url: String) {
-        if (inFlightAppNavigationUrl == url) return
-        inFlightAppNavigationUrl = url
+        if (inFlightAppNavigationUrls[this] == url) return
+        inFlightAppNavigationUrls[this] = url
 
         val host = runCatching { Uri.parse(url).host }.getOrNull()
         // Identity-provider hosts (uaSpoofHosts) -- and the hop right after one -- serve
