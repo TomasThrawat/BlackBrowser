@@ -420,7 +420,19 @@ class MainActivity : AppCompatActivity() {
                 // the disguised UA and never replay a cached redirect-chain response; every
                 // other host keeps the plain UA and LOAD_DEFAULT.
                 val needsFreshLoad = hostNeedsUaSpoof(url.host) || (view?.cameFromIdentityProvider() == true)
-                if (needsFreshLoad) {
+                // A POST navigation -- e.g. the form submit Google's account-chooser step
+                // does the moment an account is tapped -- carries a body that
+                // WebResourceRequest never exposes; there is no way to read it back out to
+                // replay it. loadUrlHonest() below always issues loadUrl(), which is always a
+                // GET, so taking the load over ourselves for a POST silently drops that body
+                // (the selected-account/CSRF data) and the server just re-renders the same
+                // chooser page -- "pick an account -> page reloads -> pick it again", forever.
+                // Only replay through loadUrlHonest for GET/method-less navigations, where no
+                // body exists to lose; for POST, apply the same UA/cache fix in place instead
+                // and let WebView finish the POST it already has, accepting the smaller
+                // reload-current-document risk described below only for this one case.
+                val isPost = request.method?.equals("POST", ignoreCase = true) == true
+                if (needsFreshLoad && !isPost) {
                     // Setting userAgentString here and then returning false (letting WebView
                     // finish the navigation it already decided on) hits a known WebView/Chromium
                     // quirk: changing the UA while a navigation is in flight reloads the CURRENT
@@ -434,8 +446,9 @@ class MainActivity : AppCompatActivity() {
                     view?.loadUrlHonest(url.toString())
                     return true
                 }
-                view?.settings?.userAgentString = computeUserAgent(url.host, forceSpoof = false)
-                view?.settings?.cacheMode = WebSettings.LOAD_DEFAULT
+                view?.settings?.userAgentString = computeUserAgent(url.host, forceSpoof = needsFreshLoad)
+                view?.settings?.cacheMode =
+                    if (needsFreshLoad) WebSettings.LOAD_NO_CACHE else WebSettings.LOAD_DEFAULT
                 return false
             }
 
