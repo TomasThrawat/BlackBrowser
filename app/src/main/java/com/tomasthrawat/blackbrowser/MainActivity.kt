@@ -369,11 +369,6 @@ class MainActivity : AppCompatActivity() {
         // redirects (Google/Facebook/GitHub OAuth callbacks, etc.) depend on them to complete.
         // An incognito tab must not send or accept cookies at all -- otherwise it silently
         // reuses whatever session is already stored from a regular tab (stays logged in).
-        // switchToTab() re-applies this on every switch too, since the cookie jar itself
-        // is one process-wide store shared by all tabs, not a per-tab jar.
-        CookieManager.getInstance().setAcceptCookie(!isIncognito)
-        CookieManager.getInstance().setAcceptThirdPartyCookies(wv, !isIncognito)
-
         wv.webViewClient = object : WebViewClient() {
             // Stops a same-tab redirect chain (meta-refresh, JS location change, a clicked
             // link, or the tail end of a popup forwarded below) from landing on a known
@@ -712,8 +707,11 @@ class MainActivity : AppCompatActivity() {
         }
         val tab = Tab(nextTabId++, wv, title, url, isIncognito)
         tabs.add(tab)
-        wv.loadUrlHonest(url)
+        // Apply the target tab's cookie policy before its first network navigation.
+        // CookieManager is process-wide, so loading before switchToTab() could start an
+        // incognito request under the previous tab's cookie policy and then flip it mid-load.
         switchToTab(tabs.size - 1)
+        wv.loadUrlHonest(url)
         updateTabsBoxCount()
     }
 
