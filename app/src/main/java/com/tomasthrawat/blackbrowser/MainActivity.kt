@@ -452,8 +452,22 @@ class MainActivity : AppCompatActivity() {
                 return false
             }
 
+            override fun onReceivedError(
+                view: WebView?,
+                request: WebResourceRequest?,
+                error: WebResourceError?
+            ) {
+                super.onReceivedError(view, request, error)
+                if (request?.isForMainFrame == true && request.url.toString() == inFlightAppNavigationUrl) {
+                    inFlightAppNavigationUrl = null
+                }
+            }
+
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
+                if (url == inFlightAppNavigationUrl) {
+                    inFlightAppNavigationUrl = null
+                }
                 val tab = tabs.find { it.webView === view } ?: return
                 tab.url = url ?: tab.url
                 tab.title = view?.title?.takeIf { it.isNotBlank() } ?: tab.url
@@ -1284,7 +1298,15 @@ class MainActivity : AppCompatActivity() {
     // User-Agent the WebView last had. Routing every app-initiated navigation through
     // here keeps the honest-vs-disguised UA decision (see baseUserAgent) correct for the
     // actual destination instead of leaking over from whatever page was open before.
+    // Prevents one user action from dispatching the exact same top-level URL twice
+    // while the first navigation is still in flight. This does not block redirects,
+    // subresources, or a deliberate new navigation after the current one finishes.
+    private var inFlightAppNavigationUrl: String? = null
+
     private fun WebView.loadUrlHonest(url: String) {
+        if (inFlightAppNavigationUrl == url) return
+        inFlightAppNavigationUrl = url
+
         val host = runCatching { Uri.parse(url).host }.getOrNull()
         // Identity-provider hosts (uaSpoofHosts) -- and the hop right after one -- serve
         // short-lived state tokens (e.g. Google's sign-in "dsh" param) on every redirect hop.
