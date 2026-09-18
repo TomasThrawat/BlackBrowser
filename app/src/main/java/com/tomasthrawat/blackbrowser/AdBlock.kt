@@ -8798,6 +8798,17 @@ object AdBlocker {
         "/ad-popup"
     )
 
+    // Cloudflare challenge infrastructure must never be swallowed by the ad blocker.
+    // A protected site can load its challenge from challenges.cloudflare.com, while newer
+    // challenge flows can also use /cdn-cgi/ endpoints on the protected origin itself.
+    // Blocking either leaves the challenge UI visible but prevents its verification request
+    // from completing, which presents exactly as a perpetual refresh/verification loop.
+    fun isCloudflareChallenge(uri: Uri): Boolean {
+        val host = uri.host?.lowercase() ?: return false
+        if (host == "cloudflare.com" || host.endsWith(".cloudflare.com")) return true
+        return uri.path?.startsWith("/cdn-cgi/", ignoreCase = true) == true
+    }
+
     fun shouldBlock(uri: Uri): Boolean {
         val host = uri.host?.lowercase() ?: return false
         if (hostOrParentMatches(host, allBlockedHosts)) return true

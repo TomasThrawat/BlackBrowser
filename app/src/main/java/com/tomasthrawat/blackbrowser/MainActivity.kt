@@ -499,7 +499,8 @@ class MainActivity : AppCompatActivity() {
                 // traffic to them (not just the top-level navigation) is safe.
                 val isTrustedHost = url != null && AdBlocker.isTrustedPopupDestination(url, null)
                 val adBlockOn = AdBlockPrefs.isEnabled(this@MainActivity)
-                val willBlock = url != null && adBlockOn && AdBlocker.shouldBlock(url) && !isTrustedHost
+                val isCloudflareChallenge = url != null && AdBlocker.isCloudflareChallenge(url)
+                val willBlock = url != null && adBlockOn && AdBlocker.shouldBlock(url) && !isTrustedHost && !isCloudflareChallenge
                 if (willBlock) {
                     return WebResourceResponse("text/plain", "UTF-8", ByteArrayInputStream(ByteArray(0)))
                 }
