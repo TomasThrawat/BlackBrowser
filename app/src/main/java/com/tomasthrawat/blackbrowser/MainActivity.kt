@@ -1233,6 +1233,13 @@ class MainActivity : AppCompatActivity() {
         "login.yahoo.com"
     )
 
+    // Origin-match patterns (scheme + host, optional leading "*." wildcard for subdomains --
+    // WebViewCompat.addDocumentStartJavaScript's own format) for exactly the hosts
+    // uaSpoofHosts/hostNeedsUaSpoof already disguise at the network level. Used to scope
+    // applyNavigatorUaPatch below to those origins instead of every page (see its comment).
+    private val uaSpoofOriginRules: Set<String> =
+        uaSpoofHosts.flatMap { listOf("https://$it", "https://*.$it") }.toSet()
+
     private fun hostNeedsUaSpoof(host: String?): Boolean =
         host != null && uaSpoofHosts.any { host == it || host.endsWith(".$it") }
 
@@ -1410,12 +1417,20 @@ class MainActivity : AppCompatActivity() {
     // uaSpoofHosts above. This is why the button silently fails to appear on some sites
     // while working fine as a direct redirect to accounts.google.com on others.
     //
-    // Patching navigator.userAgent here instead -- in every frame, on every page,
-    // unconditionally -- fixes that without touching the actual network-level User-Agent
-    // header (still governed by uaSpoofHosts/computeUserAgent exactly as before), so it
-    // can't reintroduce the declared-UA-vs-real-fingerprint mismatch that made Google flag
-    // ordinary searches as "unusual traffic" back when the network header was spoofed
-    // globally (see baseUserAgent's comment).
+    // Patching navigator.userAgent client-side is the fix, but it must be scoped to the
+    // same origins uaSpoofHosts already covers (uaSpoofOriginRules above), not every frame
+    // on every page (the previous "*" rule here). Registering it globally re-created, on
+    // the JS side, the exact declared-UA-vs-real-fingerprint mismatch this file's other UA
+    // logic exists to avoid: the network-level User-Agent header only drops "; wv" /
+    // "Version/4.0 " for uaSpoofHosts (see baseUserAgent), so a "*" script left every other
+    // site's JS-visible navigator.userAgent looking like a full desktop/Chrome browser while
+    // its actual HTTP request still declared itself as an embedded WebView. Bot-management
+    // checks (Cloudflare's "Verify you are human" interstitial included) specifically flag
+    // that inconsistency as tampered/automated traffic -- which is why the challenge kept
+    // reissuing itself right after being solved: solving it doesn't change the underlying
+    // request's fingerprint, so the very next request still read as suspicious. Restricting
+    // the script to uaSpoofOriginRules keeps the JS and network UA consistent everywhere
+    // except the handful of hosts that genuinely need the disguise.
     private fun applyNavigatorUaPatch(wv: WebView) {
         if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) return
 
@@ -1434,7 +1449,7 @@ class MainActivity : AppCompatActivity() {
             })();
         """.trimIndent()
 
-        WebViewCompat.addDocumentStartJavaScript(wv, js, setOf("*"))
+        WebViewCompat.addDocumentStartJavaScript(wv, js, uaSpoofOriginRules)
     }
 
     private fun updateDesktopSiteIcon() {
