@@ -421,7 +421,9 @@ class MainActivity : AppCompatActivity() {
                 // comment: identity-provider hosts -- and the hop right after one -- must keep
                 // the disguised UA and never replay a cached redirect-chain response; every
                 // other host keeps the plain UA and LOAD_DEFAULT.
-                val needsFreshLoad = hostNeedsUaSpoof(url.host) || (view?.cameFromIdentityProvider() == true)
+                val isGoogleSettingsNavigation = isGoogleSettingsUrl(url)
+                val needsFreshLoad = !isGoogleSettingsNavigation &&
+                    (hostNeedsUaSpoof(url.host) || (view?.cameFromIdentityProvider() == true))
                 // A POST navigation -- e.g. the form submit Google's account-chooser step
                 // does the moment an account is tapped -- carries a body that
                 // WebResourceRequest never exposes; there is no way to read it back out to
@@ -1320,11 +1322,32 @@ class MainActivity : AppCompatActivity() {
     // subresources, or a deliberate new navigation after the current one finishes.
     private val inFlightAppNavigationUrls = java.util.WeakHashMap<WebView, String>()
 
+    private fun isGoogleSettingsUrl(uri: Uri): Boolean {
+        val host = uri.host?.lowercase() ?: return false
+        if (host != "www.google.com" && host != "google.com") return false
+
+        val path = uri.path?.lowercase() ?: "/"
+        return path == "/preferences" ||
+            path == "/preferences/" ||
+            path == "/safesearch" ||
+            path == "/safesearch/"
+    }
+
     private fun WebView.loadUrlHonest(url: String) {
         if (inFlightAppNavigationUrls[this] == url) return
         inFlightAppNavigationUrls[this] = url
 
-        val host = runCatching { Uri.parse(url).host }.getOrNull()
+        val parsedUrl = runCatching { Uri.parse(url) }.getOrNull()
+        val host = parsedUrl?.host
+        val isGoogleSettingsNavigation = parsedUrl?.let { isGoogleSettingsUrl(it) } == true
+
+        if (isGoogleSettingsNavigation) {
+            settings.userAgentString = computeUserAgent(host, forceSpoof = false)
+            settings.cacheMode = WebSettings.LOAD_DEFAULT
+            loadUrl(url)
+            return
+        }
+
         // Identity-provider hosts (uaSpoofHosts) -- and the hop right after one -- serve
         // short-lived state tokens (e.g. Google's sign-in "dsh" param) on every redirect hop.
         // Two things had to stay consistent for exactly these hops: no cached response (a
