@@ -765,12 +765,11 @@ class MainActivity : AppCompatActivity() {
 
             private fun isGoogleCaptchaResource(uri: Uri?): Boolean {
                 val host = uri?.host?.lowercase() ?: return false
+                val path = uri.path?.lowercase() ?: ""
                 return host == "recaptcha.net" ||
                     host.endsWith(".recaptcha.net") ||
-                    host == "gstatic.com" ||
-                    host.endsWith(".gstatic.com") ||
-                    host == "google.com" ||
-                    host.endsWith(".google.com")
+                    path == "/recaptcha" ||
+                    path.startsWith("/recaptcha/")
             }
 
             override fun shouldInterceptRequest(
