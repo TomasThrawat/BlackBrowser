@@ -1350,11 +1350,6 @@ class MainActivity : AppCompatActivity() {
         contentDisposition: String,
         mimeType: String
     ) {
-        if (runCatching { webView.isDestroyed }.getOrDefault(true)) {
-            AppFileLogger.logNow(this, "BLOB_DOWNLOAD", "webview already destroyed")
-            return
-        }
-
         val token = UUID.randomUUID().toString()
         val bridgeName = "BlackBrowserBlobDownload_" + token.replace("-", "_")
         val bridge = BlobDownloadBridge(
@@ -1723,9 +1718,7 @@ class MainActivity : AppCompatActivity() {
                 grantResults[0] == PackageManager.PERMISSION_GRANTED
             val request = pendingBlobDownload
             pendingBlobDownload = null
-            if (granted && request != null &&
-                !runCatching { request.webView.isDestroyed }.getOrDefault(true)
-            ) {
+            if (granted && request != null) {
                 beginBlobDownload(
                     request.webView,
                     request.url,
