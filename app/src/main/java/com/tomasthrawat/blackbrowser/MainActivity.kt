@@ -1,5 +1,6 @@
 package com.tomasthrawat.blackbrowser
 
+import com.tomasthrawat.blackbrowser.R
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.DownloadManager
