@@ -436,17 +436,6 @@ class MainActivity : AppCompatActivity() {
             ): Boolean {
                 val url = request?.url ?: return false
 
-                // Never render Google Search results inside this embedded WebView. Google can
-                // apply anti-abuse checks to embedded WebView traffic; use a real installed
-                // browser context instead.
-                if (request.isForMainFrame &&
-                    request.method?.equals("POST", ignoreCase = true) != true &&
-                    isGoogleSearchUrl(url)
-                ) {
-                    openGoogleSearchInBrowser(url.toString())
-                    return true
-                }
-
                 // Google Search submits a dynamic URL with many transient parameters. Normalize
                 // main-frame search navigations before WebView starts the request so the browser
                 // keeps one stable, compact search URL instead of replaying that generated URL.
@@ -677,6 +666,16 @@ class MainActivity : AppCompatActivity() {
                 }
             }
 
+            private fun isGoogleCaptchaResource(uri: Uri?): Boolean {
+                val host = uri?.host?.lowercase() ?: return false
+                return host == "recaptcha.net" ||
+                    host.endsWith(".recaptcha.net") ||
+                    host == "gstatic.com" ||
+                    host.endsWith(".gstatic.com") ||
+                    host == "google.com" ||
+                    host.endsWith(".google.com")
+            }
+
             override fun shouldInterceptRequest(
                 view: WebView?,
                 request: WebResourceRequest?
@@ -701,12 +700,14 @@ class MainActivity : AppCompatActivity() {
         // document that paints only its black background. Never filter Google-owned traffic
         // here; Google Search already has its own server-side abuse controls.
         val isGooglePage = url != null && isGooglePage(url)
+        val isGoogleCaptcha = url != null && isGoogleCaptchaResource(url)
         val willBlock = url != null &&
             adBlockOn &&
             AdBlocker.shouldBlock(url) &&
             !isTrustedHost &&
             !isCloudflareChallenge &&
-            !isGooglePage
+            !isGooglePage &&
+            !isGoogleCaptcha
                 if (willBlock) {
                     return WebResourceResponse("text/plain", "UTF-8", ByteArrayInputStream(ByteArray(0)))
                 }
@@ -1595,78 +1596,6 @@ class MainActivity : AppCompatActivity() {
         return host == "google.com" || host.endsWith(".google.com")
     }
 
-    private fun isGoogleSearchUrl(uri: Uri): Boolean {
-        if (!uri.scheme.equals("https", ignoreCase = true)) return false
-        val host = uri.host?.lowercase() ?: return false
-        if (host != "www.google.com" && host != "google.com") return false
-        return uri.path?.equals("/search", ignoreCase = true) == true &&
-            !uri.getQueryParameter("q").isNullOrBlank()
-    }
-
-    private fun openGoogleSearchInBrowser(url: String) {
-        try {
-            val uri = Uri.parse(url)
-            val candidates = packageManager.queryIntentActivities(
-                Intent(Intent.ACTION_VIEW, uri).addCategory(Intent.CATEGORY_BROWSABLE),
-                PackageManager.MATCH_DEFAULT_ONLY
-            )
-
-            val external = candidates.firstOrNull {
-                it.activityInfo?.packageName != null &&
-                    it.activityInfo.packageName != packageName
-            }
-
-            val externalPackage = external?.activityInfo?.packageName
-            if (externalPackage == null) {
-                AppFileLogger.log(
-                    this,
-                    "SEARCH",
-                    "no external browser available for Google Search"
-                )
-                Toast.makeText(
-                    this,
-                    getString(R.string.search_external_browser_required),
-                    Toast.LENGTH_SHORT
-                ).show()
-                return
-            }
-
-            val intent = Intent(Intent.ACTION_VIEW, uri).apply {
-                addCategory(Intent.CATEGORY_BROWSABLE)
-                setPackage(externalPackage)
-            }
-            startActivity(intent)
-            AppFileLogger.log(
-                this,
-                "SEARCH",
-                "opened Google Search in external browser=" + externalPackage
-            )
-        } catch (e: ActivityNotFoundException) {
-            AppFileLogger.logExceptionNow(
-                this,
-                "SEARCH",
-                "no external browser available for Google Search",
-                e
-            )
-            Toast.makeText(
-                this,
-                getString(R.string.search_external_browser_required),
-                Toast.LENGTH_SHORT
-            ).show()
-        } catch (t: Throwable) {
-            AppFileLogger.logExceptionNow(
-                this,
-                "SEARCH",
-                "failed to open Google Search externally",
-                t
-            )
-            Toast.makeText(
-                this,
-                getString(R.string.search_external_browser_required),
-                Toast.LENGTH_SHORT
-            ).show()
-        }
-    }
 
     private fun WebView.loadUrlHonest(url: String) {
         // The refresh button is the explicit way to reload the current document. Avoid issuing
@@ -1679,12 +1608,6 @@ class MainActivity : AppCompatActivity() {
         val parsedUrl = runCatching { Uri.parse(url) }.getOrNull()
         val host = parsedUrl?.host
         val isGoogleSettingsNavigation = parsedUrl?.let { isGoogleSettingsUrl(it) } == true
-
-        if (parsedUrl != null && isGoogleSearchUrl(parsedUrl)) {
-            openGoogleSearchInBrowser(url)
-            inFlightAppNavigationUrls.remove(this)
-            return
-        }
 
         if (isGoogleSettingsNavigation) {
             settings.userAgentString = computeUserAgent(host, forceSpoof = false)
