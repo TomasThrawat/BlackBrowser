@@ -28,16 +28,18 @@ jobs:
           gradle-version: '8.7'
 
       - name: Run unit tests
-        run: gradle testDebugUnitTest --stacktrace
+        run: ./gradlew testDebugUnitTest --stacktrace
 
       - name: Build debug APK
-        run: gradle assembleDebug --stacktrace
+        run: ./gradlew assembleDebug --stacktrace
 
-      - name: Verify APK metadata
+      - name: Verify APK metadata and signature
         run: |
           APK="$GITHUB_WORKSPACE/app/build/outputs/apk/debug/app-debug.apk"
           test -s "$APK"
-          keytool -printcert -jarfile "$APK" | sed -n '1,12p'
+          SDK_BUILD_TOOLS="$(ls -1d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n 1)"
+          "$SDK_BUILD_TOOLS/apksigner" verify --verbose --print-certs "$APK"
+          "$SDK_BUILD_TOOLS/zipalign" -c -v 4 "$APK"
           ls -lh "$APK"
 
       - name: Upload APK
