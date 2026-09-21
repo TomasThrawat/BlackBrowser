@@ -693,7 +693,18 @@ class MainActivity : AppCompatActivity() {
                 val isTrustedHost = url != null && AdBlocker.isTrustedPopupDestination(url, null)
                 val adBlockOn = AdBlockPrefs.isEnabled(this@MainActivity)
                 val isCloudflareChallenge = url != null && AdBlocker.isCloudflareChallenge(url)
-                val willBlock = url != null && adBlockOn && AdBlocker.shouldBlock(url) && !isTrustedHost && !isCloudflareChallenge
+                // Google owns many of the scripts/styles/images used by its search UI, and some
+        // of those resource hosts also appear in broad community blocklists. Blocking a
+        // required Google subresource can leave the WebView with a successfully finished
+        // document that paints only its black background. Never filter Google-owned traffic
+        // here; Google Search already has its own server-side abuse controls.
+        val isGooglePage = url != null && isGooglePage(url)
+        val willBlock = url != null &&
+            adBlockOn &&
+            AdBlocker.shouldBlock(url) &&
+            !isTrustedHost &&
+            !isCloudflareChallenge &&
+            !isGooglePage
                 if (willBlock) {
                     return WebResourceResponse("text/plain", "UTF-8", ByteArrayInputStream(ByteArray(0)))
                 }
