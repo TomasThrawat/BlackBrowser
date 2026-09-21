@@ -1349,6 +1349,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun WebView.loadUrlHonest(url: String) {
+        // The refresh button is the explicit way to reload the current document. Avoid issuing
+        // another identical top-level request from address-bar/history/popup dispatch when that
+        // exact URL is already what this WebView is displaying.
+        if (url == this.url) return
         if (inFlightAppNavigationUrls[this] == url) return
         inFlightAppNavigationUrls[this] = url
 
@@ -1721,20 +1725,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun loadFromInput() {
-        var input = editUrl.text.toString().trim()
-        if (input.isEmpty()) return
-
-        val looksLikeUrl = input.contains(".") && !input.contains(" ")
-        input = if (looksLikeUrl) {
-            if (!input.startsWith("http://") && !input.startsWith("https://")) {
-                "https://$input"
-            } else {
-                input
-            }
-        } else {
-            "https://www.google.com/search?q=${Uri.encode(input)}"
-        }
-
+        val input = BrowserNavigation.toUrl(editUrl.text.toString())
+        if (input.isBlank()) return
         activeWebView.loadUrlHonest(input)
     }
 
