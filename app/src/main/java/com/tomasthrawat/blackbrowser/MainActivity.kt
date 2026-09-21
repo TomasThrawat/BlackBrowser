@@ -43,6 +43,8 @@ import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.OnBackPressedCallback
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
@@ -119,6 +121,16 @@ class MainActivity : AppCompatActivity() {
     private var pendingFileChooserParams: FileChooserParams? = null
     private var cameraImageUri: Uri? = null
 
+    private val fileChooserLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        handleFileChooserResult(result.resultCode, result.data)
+    }
+
+    private val defaultBrowserRoleLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { }
+
     private data class PendingDownload(
         val url: String,
         val userAgent: String,
@@ -169,6 +181,12 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                handleBackPressed()
+            }
+        })
 
         // Loads the bundled extended blocklist (HaGeZi/1Hosts/oisd/StevenBlack merge, ~321k
         // domains) from assets. Done on a background thread since it parses a few MB of text;
@@ -1001,7 +1019,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         try {
-            startActivityForResult(chooser, REQUEST_FILE_CHOOSER)
+            fileChooserLauncher.launch(chooser)
         } catch (e: ActivityNotFoundException) {
             fileChooserCallback?.onReceiveValue(null)
             fileChooserCallback = null
@@ -1024,11 +1042,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    @Suppress("DEPRECATION")
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode != REQUEST_FILE_CHOOSER) return
-
+    private fun handleFileChooserResult(resultCode: Int, data: Intent?) {
         val callback = fileChooserCallback
         fileChooserCallback = null
         if (callback == null) return
@@ -1674,9 +1688,8 @@ class MainActivity : AppCompatActivity() {
                 roleManager.isRoleAvailable(RoleManager.ROLE_BROWSER) &&
                 !roleManager.isRoleHeld(RoleManager.ROLE_BROWSER)
             ) {
-                startActivityForResult(
-                    roleManager.createRequestRoleIntent(RoleManager.ROLE_BROWSER),
-                    REQUEST_SET_DEFAULT_BROWSER
+                defaultBrowserRoleLauncher.launch(
+                    roleManager.createRequestRoleIntent(RoleManager.ROLE_BROWSER)
                 )
                 return
             }
@@ -1750,8 +1763,7 @@ class MainActivity : AppCompatActivity() {
         WindowInsetsControllerCompat(window, window.decorView).show(WindowInsetsCompat.Type.systemBars())
     }
 
-    @Suppress("DEPRECATION", "MissingSuperCall")
-    override fun onBackPressed() {
+    private fun handleBackPressed() {
         if (fullscreenCustomView != null) {
             exitFullscreenVideo()
             return
@@ -1759,14 +1771,12 @@ class MainActivity : AppCompatActivity() {
         if (activeWebView.canGoBack()) {
             activeWebView.goBack()
         } else {
-            super.onBackPressed()
+            finish()
         }
     }
 
     companion object {
         private const val REQUEST_STORAGE_PERMISSION = 1001
-        private const val REQUEST_SET_DEFAULT_BROWSER = 1002
-        private const val REQUEST_FILE_CHOOSER = 1003
         private const val REQUEST_MEDIA_PERMISSION = 1004
         private const val STABLE_WEBVIEW_PACKAGE = "com.google.android.webview"
     }
