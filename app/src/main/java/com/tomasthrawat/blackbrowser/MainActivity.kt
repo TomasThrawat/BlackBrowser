@@ -57,6 +57,7 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
 import androidx.webkit.ScriptHandler
+import androidx.browser.customtabs.CustomTabColorSchemeParams
 import androidx.browser.customtabs.CustomTabsIntent
 import androidx.webkit.UserAgentMetadata
 import androidx.webkit.WebSettingsCompat
@@ -1589,8 +1590,11 @@ class MainActivity : AppCompatActivity() {
 
     private fun openGoogleSearchInBrowser(url: String) {
         try {
-            val customTabs = CustomTabsIntent.Builder()
+            val colorParams = CustomTabColorSchemeParams.Builder()
                 .setToolbarColor(Color.BLACK)
+                .build()
+            val customTabs = CustomTabsIntent.Builder()
+                .setDefaultColorSchemeParams(colorParams)
                 .setShowTitle(true)
                 .build()
             customTabs.launchUrl(this, Uri.parse(url))
