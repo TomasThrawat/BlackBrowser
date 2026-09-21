@@ -1508,11 +1508,20 @@ class MainActivity : AppCompatActivity() {
             })();
         """.trimIndent()
 
-        WebViewCompat.addDocumentStartJavaScript(
-            wv,
-            js,
-            setOf("https://www.google.com", "https://www.google.com/")
-        )
+        try {
+            WebViewCompat.addDocumentStartJavaScript(
+                wv,
+                js,
+                setOf("https://www.google.com")
+            )
+        } catch (e: IllegalArgumentException) {
+            AppFileLogger.logExceptionNow(
+                this,
+                "SEARCH",
+                "Google Search document-start injection rejected by WebView",
+                e
+            )
+        }
     }
 
     private fun WebView.loadUrlHonest(url: String) {
