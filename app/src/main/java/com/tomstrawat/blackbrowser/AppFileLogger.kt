@@ -59,12 +59,16 @@ object AppFileLogger {
         }
     }
 
-    fun logExceptionNow(context: Context, tag: String, message: String, throwable: Throwable) {
+    fun logExceptionNow(
+        context: Context,
+        tag: String,
+        message: String,
+        throwable: Throwable
+    ) {
         val app = context.applicationContext
         val writer = StringWriter()
         throwable.printStackTrace(PrintWriter(writer))
-        val line = formatLine(tag, message + "
-" + writer.toString())
+        val line = formatLine(tag, message + "\n" + writer.toString())
         try {
             synchronized(lock) {
                 appendLine(app, line)
@@ -74,9 +78,7 @@ object AppFileLogger {
     }
 
     fun safeString(value: String?): String =
-        value?.replace("
-", "\n")?.replace("
-", "\r") ?: "<null>"
+        value?.replace("\n", "\\n")?.replace("\r", "\\r") ?: "<null>"
 
     fun safeUri(uri: Uri?): String = uri?.let {
         try {
@@ -92,8 +94,8 @@ object AppFileLogger {
 
     private fun formatLine(tag: String, message: String): String {
         val timestamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US).format(Date())
-        return "[" + timestamp + "] [" + Thread.currentThread().name + "] [" + tag + "] " + message + "
-"
+        return "[" + timestamp + "] [" + Thread.currentThread().name + "] [" + tag + "] " +
+            message + "\n"
     }
 
     private fun appendLine(context: Context, line: String) {
@@ -127,12 +129,16 @@ object AppFileLogger {
                 put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
                 put(MediaStore.MediaColumns.IS_PENDING, 0)
             }
-            val uri = context.contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
-                ?: return null
+            val uri = context.contentResolver.insert(
+                MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                values
+            ) ?: return null
             prefs.edit().putString(KEY_URI, uri.toString()).apply()
             uri
         } else {
-            val downloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            val downloads = Environment.getExternalStoragePublicDirectory(
+                Environment.DIRECTORY_DOWNLOADS
+            )
             if (!downloads.exists() && !downloads.mkdirs()) return null
             Uri.fromFile(File(downloads, FILE_NAME))
         }
