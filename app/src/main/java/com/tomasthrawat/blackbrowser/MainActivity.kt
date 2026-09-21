@@ -57,9 +57,6 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
 import androidx.webkit.ScriptHandler
-import androidx.browser.customtabs.CustomTabColorSchemeParams
-import androidx.browser.customtabs.CustomTabsClient
-import androidx.browser.customtabs.CustomTabsIntent
 import androidx.webkit.UserAgentMetadata
 import androidx.webkit.WebSettingsCompat
 import androidx.webkit.WebViewCompat
@@ -156,33 +153,51 @@ class MainActivity : AppCompatActivity() {
         override fun onReceive(context: Context, intent: Intent) {
             try {
                 val id = intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1L)
-                if (id == -1L || !appDownloadIds.remove(id)) return
+                if (id == -1L) return
 
-                val dm = context.getSystemService(Context.DOWNLOAD_SERVICE) as? DownloadManager ?: return
+                val owned = synchronized(appDownloadIds) {
+                    appDownloadIds.remove(id)
+                }
+                if (!owned) return
+
+                val dm = context.getSystemService(Context.DOWNLOAD_SERVICE) as? DownloadManager
+                    ?: return
                 val cursor = dm.query(DownloadManager.Query().setFilterById(id)) ?: return
                 cursor.use {
                     if (!it.moveToFirst()) return@use
 
                     val statusIdx = it.getColumnIndex(DownloadManager.COLUMN_STATUS)
+                    val reasonIdx = it.getColumnIndex(DownloadManager.COLUMN_REASON)
                     val mimeIdx = it.getColumnIndex(DownloadManager.COLUMN_MEDIA_TYPE)
                     val status = if (statusIdx >= 0) it.getInt(statusIdx) else -1
+                    val reason = if (reasonIdx >= 0) it.getInt(reasonIdx) else -1
                     val mime = if (mimeIdx >= 0) it.getString(mimeIdx) else null
 
-                    if (status == DownloadManager.STATUS_SUCCESSFUL &&
-                        mime.equals("application/vnd.android.package-archive", ignoreCase = true)
-                    ) {
-                        val contentUri = dm.getUriForDownloadedFile(id)
-                            ?: return@use
-                        val installIntent = Intent(Intent.ACTION_VIEW).apply {
-                            setDataAndType(contentUri, "application/vnd.android.package-archive")
-                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                        }
-                        context.startActivity(installIntent)
+                    AppFileLogger.log(
+                        context,
+                        "DOWNLOAD",
+                        "complete id=" + id +
+                            " status=" + status +
+                            " reason=" + reason +
+                            " mime=" + AppFileLogger.safeString(mime)
+                    )
+
+                    if (status == DownloadManager.STATUS_FAILED) {
+                        Toast.makeText(
+                            context,
+                            context.getString(R.string.download_failed),
+                            Toast.LENGTH_SHORT
+                        ).show()
                     }
                 }
-            } catch (_: Exception) {
-                // A download-complete callback must never crash the browser process.
-                Toast.makeText(context, getString(R.string.download_open_failed), Toast.LENGTH_SHORT).show()
+            } catch (t: Throwable) {
+                // Download completion must never terminate the browser process.
+                AppFileLogger.logExceptionNow(
+                    context,
+                    "DOWNLOAD",
+                    "download completion receiver failed",
+                    t
+                )
             }
         }
     }
@@ -421,10 +436,9 @@ class MainActivity : AppCompatActivity() {
             ): Boolean {
                 val url = request?.url ?: return false
 
-                // Google Search is a public web service that can apply anti-abuse checks to
-                // embedded WebView traffic. Use AndroidX Custom Tabs for the search results,
-                // which renders the same URL in the user's browser-backed browsing context
-                // instead of spoofing a WebView User-Agent or bypassing Google's checks.
+                // Never render Google Search results inside this embedded WebView. Google can
+                // apply anti-abuse checks to embedded WebView traffic; use a real installed
+                // browser context instead.
                 if (request.isForMainFrame &&
                     request.method?.equals("POST", ignoreCase = true) != true &&
                     isGoogleSearchUrl(url)
@@ -1591,75 +1605,66 @@ class MainActivity : AppCompatActivity() {
 
     private fun openGoogleSearchInBrowser(url: String) {
         try {
-            val colorParams = CustomTabColorSchemeParams.Builder()
-                .setToolbarColor(Color.BLACK)
-                .build()
-            val customTabs = CustomTabsIntent.Builder()
-                .setDefaultColorSchemeParams(colorParams)
-                .setShowTitle(true)
-                .build()
+            val uri = Uri.parse(url)
+            val candidates = packageManager.queryIntentActivities(
+                Intent(Intent.ACTION_VIEW, uri).addCategory(Intent.CATEGORY_BROWSABLE),
+                PackageManager.MATCH_DEFAULT_ONLY
+            )
 
-            // BlackBrowser is itself an HTTP(S) browser and can be the user's default
-            // browser. A plain ACTION_VIEW Custom Tab launch has no explicit destination,
-            // so the OS can resolve it back to BlackBrowser and re-enter MainActivity.
-            // Select the actual Custom Tabs provider explicitly to prevent that loop.
-            val providerPackage = runCatching {
-                CustomTabsClient.getPackageName(this, null)
-            }.getOrNull()?.takeUnless { it == packageName }
+            val external = candidates.firstOrNull {
+                it.activityInfo?.packageName != null &&
+                    it.activityInfo.packageName != packageName
+            }
 
-            if (providerPackage != null) {
-                customTabs.intent.setPackage(providerPackage)
-                customTabs.launchUrl(this, Uri.parse(url))
+            val externalPackage = external?.activityInfo?.packageName
+            if (externalPackage == null) {
                 AppFileLogger.log(
                     this,
                     "SEARCH",
-                    "opened Google Search in Custom Tab provider=" + providerPackage
+                    "no external browser available for Google Search"
                 )
-                return
-            }
-
-            // No Custom Tabs provider is available. Pick a different BROWSABLE https
-            // handler instead of allowing Android to resolve the URL back to this browser.
-            val externalBrowser = runCatching {
-                val viewIntent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
-                    .addCategory(Intent.CATEGORY_BROWSABLE)
-                packageManager.queryIntentActivities(
-                    viewIntent,
-                    PackageManager.MATCH_DEFAULT_ONLY
-                ).firstOrNull { it.activityInfo?.packageName != packageName }
-            }.getOrNull()
-
-            if (externalBrowser?.activityInfo?.packageName != null) {
-                customTabs.intent.setPackage(externalBrowser.activityInfo.packageName)
-                customTabs.launchUrl(this, Uri.parse(url))
-                AppFileLogger.log(
+                Toast.makeText(
                     this,
-                    "SEARCH",
-                    "opened Google Search in external browser=" +
-                        externalBrowser.activityInfo.packageName
-                )
+                    getString(R.string.search_external_browser_required),
+                    Toast.LENGTH_SHORT
+                ).show()
                 return
             }
 
+            val intent = Intent(Intent.ACTION_VIEW, uri).apply {
+                addCategory(Intent.CATEGORY_BROWSABLE)
+                setPackage(externalPackage)
+            }
+            startActivity(intent)
             AppFileLogger.log(
                 this,
                 "SEARCH",
-                "no external Custom Tabs/browser provider available"
+                "opened Google Search in external browser=" + externalPackage
             )
         } catch (e: ActivityNotFoundException) {
             AppFileLogger.logExceptionNow(
                 this,
                 "SEARCH",
-                "no activity available for Google Search Custom Tab",
+                "no external browser available for Google Search",
                 e
             )
-        } catch (e: Exception) {
+            Toast.makeText(
+                this,
+                getString(R.string.search_external_browser_required),
+                Toast.LENGTH_SHORT
+            ).show()
+        } catch (t: Throwable) {
             AppFileLogger.logExceptionNow(
                 this,
                 "SEARCH",
-                "failed to open Google Search Custom Tab",
-                e
+                "failed to open Google Search externally",
+                t
             )
+            Toast.makeText(
+                this,
+                getString(R.string.search_external_browser_required),
+                Toast.LENGTH_SHORT
+            ).show()
         }
     }
 
