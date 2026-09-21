@@ -352,7 +352,7 @@ class MainActivity : AppCompatActivity() {
             // Private tab: no disk/RAM cache. Note this WebView engine shares one
             // cookie/session store across the whole app process, so this gives
             // "no history + no cache" rather than full multi-profile isolation.
-            wv.settings.cacheMode = WebSettings.LOAD_DEFAULT
+            wv.settings.cacheMode = WebSettings.LOAD_NO_CACHE
         }
         // Needed so onCreateWindow below actually gets called for window.open() (sign-in
         // popups, ad pop-unders) instead of the request being silently dropped.
