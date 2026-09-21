@@ -617,7 +617,7 @@ class MainActivity : AppCompatActivity() {
                         // the FIRST hop (as this used to do) cuts that chain short and hands
                         // the main tab an intermediate URL instead of the finished sign-in,
                         // which is what produced the ServiceLogin <-> www.google.com/?pli=1
-                        // bounce seen in blackbrowser_debug.log. Let it keep following its
+                        // bounce seen during earlier debugging. Let it keep following its
                         // own chain and only forward once it leaves that host.
                         if (hostNeedsUaSpoof(destUrl.host)) {
                             v?.settings?.userAgentString =
