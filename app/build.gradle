@@ -4,22 +4,42 @@ plugins {
 }
 
 android {
-    namespace 'com.tomasthrawat.blackbrowser'
+    namespace 'com.tomstrawat.blackbrowser'
     compileSdk 34
 
     defaultConfig {
-        applicationId "com.tomasthrawat.blackbrowser"
+        applicationId "com.tomstrawat.blackbrowser"
         minSdk 24
         targetSdk 34
-        versionCode 4
-        versionName "1.3"
+
+        def ciVersionCode = System.getenv("GITHUB_RUN_NUMBER")
+        def computedVersionCode = ciVersionCode?.isInteger() ? ciVersionCode.toInteger() : 5
+        versionCode computedVersionCode
+        versionName "1.4"
+    }
+
+    signingConfigs {
+        release {
+            def keystorePath = System.getenv("BLACKBROWSER_KEYSTORE_FILE")
+            if (keystorePath) {
+                storeFile file(keystorePath)
+                storePassword System.getenv("BLACKBROWSER_KEYSTORE_PASSWORD")
+                keyAlias System.getenv("BLACKBROWSER_KEY_ALIAS")
+                keyPassword System.getenv("BLACKBROWSER_KEY_PASSWORD")
+            }
+        }
     }
 
     buildTypes {
         release {
+            signingConfig signingConfigs.debug
             minifyEnabled true
             shrinkResources true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+
+            if (System.getenv("BLACKBROWSER_KEYSTORE_FILE")) {
+                signingConfig signingConfigs.release
+            }
         }
     }
 
