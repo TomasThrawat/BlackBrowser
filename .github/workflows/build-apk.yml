@@ -28,18 +28,23 @@ jobs:
           gradle-version: '8.7'
 
       - name: Run unit tests
-        run: ./gradlew testDebugUnitTest --stacktrace
+        run: gradle testDebugUnitTest --stacktrace
 
       - name: Build debug APK
-        run: ./gradlew assembleDebug --stacktrace
+        run: gradle assembleDebug --stacktrace
 
       - name: Verify APK metadata and signature
         run: |
+          set -euo pipefail
           APK="$GITHUB_WORKSPACE/app/build/outputs/apk/debug/app-debug.apk"
           test -s "$APK"
           SDK_BUILD_TOOLS="$(ls -1d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n 1)"
+          test -x "$SDK_BUILD_TOOLS/apksigner"
+          test -x "$SDK_BUILD_TOOLS/zipalign"
+          test -x "$SDK_BUILD_TOOLS/aapt"
           "$SDK_BUILD_TOOLS/apksigner" verify --verbose --print-certs "$APK"
           "$SDK_BUILD_TOOLS/zipalign" -c -v 4 "$APK"
+          "$SDK_BUILD_TOOLS/aapt" dump badging "$APK" | grep -F "package: name='com.tomasthrawat.blackbrowser' versionCode='150'"
           ls -lh "$APK"
 
       - name: Upload APK
@@ -47,3 +52,4 @@ jobs:
         with:
           name: app-debug
           path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error

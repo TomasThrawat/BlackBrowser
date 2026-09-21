@@ -3,6 +3,9 @@ plugins {
     id 'org.jetbrains.kotlin.android'
 }
 
+def ciRunNumber = System.getenv("GITHUB_RUN_NUMBER")
+def ciVersionCode = ciRunNumber?.isInteger() ? ciRunNumber.toInteger() : 145
+
 android {
     namespace 'com.tomasthrawat.blackbrowser'
     compileSdk 34
@@ -11,7 +14,7 @@ android {
         applicationId "com.tomasthrawat.blackbrowser"
         minSdk 24
         targetSdk 34
-        versionCode 145
+        versionCode ciVersionCode
         versionName "1.4"
     }
 
