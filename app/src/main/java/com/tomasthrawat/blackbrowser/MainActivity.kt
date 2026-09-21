@@ -394,6 +394,7 @@ class MainActivity : AppCompatActivity() {
         applyUserAgentMetadata(wv)
         applyUserAgentDataOverride(wv)
         applyNavigatorUaPatch(wv)
+        applyGoogleSearchFormFix(wv)
 
         wv.setLayerType(View.LAYER_TYPE_HARDWARE, null)
 
@@ -421,20 +422,6 @@ class MainActivity : AppCompatActivity() {
                 // Google Search submits a dynamic URL with many transient parameters. Normalize
                 // main-frame search navigations before WebView starts the request so the browser
                 // keeps one stable, compact search URL instead of replaying that generated URL.
-                if (request.isForMainFrame) {
-                    val normalizedGoogleSearch = normalizeGoogleSearchNavigation(url)
-                    if (normalizedGoogleSearch != null && normalizedGoogleSearch != url.toString()) {
-                        AppFileLogger.log(
-                            this@MainActivity,
-                            "SEARCH",
-                            "normalize google search from=" + AppFileLogger.safeUri(url) +
-                                " to=" + AppFileLogger.safeUri(Uri.parse(normalizedGoogleSearch))
-                        )
-                        view?.loadUrlHonest(normalizedGoogleSearch)
-                        return true
-                    }
-                }
-
                 // Same-tab OAuth/2FA redirect chains (Google/Apple/Microsoft/etc. sign-in
                 // callbacks) must never be silently killed by the ad-block host list -- only
                 // the popup path (onCreateWindow) used to be exempted via
@@ -1478,18 +1465,54 @@ class MainActivity : AppCompatActivity() {
             path == "/safesearch/"
     }
 
-    private fun normalizeGoogleSearchNavigation(uri: Uri): String? {
-        val host = uri.host?.lowercase() ?: return null
-        if (host != "www.google.com" && host != "google.com") return null
-        if (uri.path?.lowercase() != "/search") return null
-        val query = uri.getQueryParameter("q")?.trim().takeIf { !it.isNullOrEmpty() }
-            ?: return null
-        return BrowserNavigation.googleSearchUrl(query)
-    }
-
     private fun isGooglePage(uri: Uri?): Boolean {
         val host = uri?.host?.lowercase() ?: return false
         return host == "google.com" || host.endsWith(".google.com")
+    }
+
+    private fun applyGoogleSearchFormFix(wv: WebView) {
+        if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) return
+
+        val js = """
+            (function() {
+                try {
+                    function install() {
+                        var path = window.location.pathname;
+                        if (path !== "/" && path !== "/webhp" && path !== "/webhp/") return;
+
+                        document.addEventListener("submit", function(event) {
+                            var form = event.target;
+                            if (!form || !form.querySelector) return;
+
+                            var input = form.querySelector('input[name="q"]');
+                            if (!input) return;
+
+                            var query = String(input.value || "").trim();
+                            if (!query) return;
+
+                            event.preventDefault();
+                            event.stopImmediatePropagation();
+
+                            window.location.href =
+                                "https://www.google.com/search?gbv=1&q=" +
+                                encodeURIComponent(query);
+                        }, true);
+                    }
+
+                    if (document.readyState === "loading") {
+                        install();
+                    } else {
+                        install();
+                    }
+                } catch (e) {}
+            })();
+        """.trimIndent()
+
+        WebViewCompat.addDocumentStartJavaScript(
+            wv,
+            js,
+            setOf("https://www.google.com", "https://www.google.com/")
+        )
     }
 
     private fun WebView.loadUrlHonest(url: String) {
