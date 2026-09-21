@@ -394,7 +394,6 @@ class MainActivity : AppCompatActivity() {
         applyUserAgentMetadata(wv)
         applyUserAgentDataOverride(wv)
         applyNavigatorUaPatch(wv)
-        applyGoogleSearchFormFix(wv)
 
         wv.setLayerType(View.LAYER_TYPE_HARDWARE, null)
 
@@ -458,6 +457,32 @@ class MainActivity : AppCompatActivity() {
                 if (tryHandOffToAppLink(url)) {
                     return true
                 }
+
+                // Google homepage search submits a generated /search URL with transient
+                // parameters. Normalize only main-frame GET searches to the stable URL used by
+                // BrowserNavigation. POST navigations and all non-search URLs are untouched.
+                if (request.isForMainFrame &&
+                    request.method?.equals("GET", ignoreCase = true) != false &&
+                    (url.host.equals("www.google.com", ignoreCase = true) ||
+                        url.host.equals("google.com", ignoreCase = true)) &&
+                    url.path.equals("/search", ignoreCase = true)
+                ) {
+                    val query = url.getQueryParameter("q")?.trim().orEmpty()
+                    if (query.isNotEmpty()) {
+                        val compactUrl = BrowserNavigation.googleSearchUrl(query)
+                        if (compactUrl != url.toString()) {
+                            AppFileLogger.log(
+                                this@MainActivity,
+                                "SEARCH",
+                                "normalized Google Search query=" +
+                                    AppFileLogger.safeString(query)
+                            )
+                            view?.loadUrlHonest(compactUrl)
+                            return true
+                        }
+                    }
+                }
+
                 // Link clicks and JS/meta redirects land here (unlike loadUrlHonest's
                 // app-initiated loads), so the UA has to be corrected for the new
                 // destination here too, before letting the load through. See loadUrlHonest's
@@ -1553,60 +1578,6 @@ class MainActivity : AppCompatActivity() {
     private fun isGooglePage(uri: Uri?): Boolean {
         val host = uri?.host?.lowercase() ?: return false
         return host == "google.com" || host.endsWith(".google.com")
-    }
-
-    private fun applyGoogleSearchFormFix(wv: WebView) {
-        if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) return
-
-        val js = """
-            (function() {
-                try {
-                    function install() {
-                        var path = window.location.pathname;
-                        if (path !== "/" && path !== "/webhp" && path !== "/webhp/") return;
-
-                        document.addEventListener("submit", function(event) {
-                            var form = event.target;
-                            if (!form || !form.querySelector) return;
-
-                            var input = form.querySelector('input[name="q"]');
-                            if (!input) return;
-
-                            var query = String(input.value || "").trim();
-                            if (!query) return;
-
-                            event.preventDefault();
-                            event.stopImmediatePropagation();
-
-                            window.location.href =
-                                "https://www.google.com/search?gbv=1&q=" +
-                                encodeURIComponent(query);
-                        }, true);
-                    }
-
-                    if (document.readyState === "loading") {
-                        install();
-                    } else {
-                        install();
-                    }
-                } catch (e) {}
-            })();
-        """.trimIndent()
-
-        try {
-            WebViewCompat.addDocumentStartJavaScript(
-                wv,
-                js,
-                setOf("https://www.google.com")
-            )
-        } catch (e: IllegalArgumentException) {
-            AppFileLogger.logExceptionNow(
-                this,
-                "SEARCH",
-                "Google Search document-start injection rejected by WebView",
-                e
-            )
-        }
     }
 
     private fun WebView.loadUrlHonest(url: String) {
