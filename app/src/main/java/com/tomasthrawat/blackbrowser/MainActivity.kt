@@ -944,7 +944,7 @@ class MainActivity : AppCompatActivity() {
                             "WEBVIEW_RENDER",
                             "popupRendererGone didCrash=" + detail?.didCrash() +
                                 " priorityAtExit=" + detail?.rendererPriorityAtExit() +
-                                " url=" + AppFileLogger.safeString(v?.url)
+                                " url=" + AppFileLogger.safeUrl(v?.url)
                         )
                         try {
                             v?.destroy()
@@ -1063,11 +1063,11 @@ class MainActivity : AppCompatActivity() {
                     this,
                     "DOWNLOAD",
                     "listener scheme=" + AppFileLogger.safeString(scheme) +
-                        " url=" + AppFileLogger.safeString(url) +
+                        " url=" + AppFileLogger.safeUrl(url) +
                         " mime=" + mimeType +
                         " length=" + contentLength +
                         " disposition=" + AppFileLogger.safeString(contentDisposition) +
-                        " referer=" + AppFileLogger.safeString(wv.url)
+                        " referer=" + AppFileLogger.safeUrl(wv.url)
                 )
                 AppFileLogger.traceNow(
                     this,
@@ -1288,7 +1288,7 @@ class MainActivity : AppCompatActivity() {
     // below so it goes through the same storage-permission / DownloadManager path as
     // every other download in the app instead of a separate one-off code path.
     private fun confirmDownloadImage(wv: WebView, imageUrl: String) {
-        AppFileLogger.log(this, "DOWNLOAD", "image dialog url=" + AppFileLogger.safeString(imageUrl))
+        AppFileLogger.log(this, "DOWNLOAD", "image dialog url=" + AppFileLogger.safeUrl(imageUrl))
         val guessedMime = imageUrl.substringAfterLast('.', "").substringBefore('?')
             .takeIf { it.isNotBlank() }
             ?.let { MimeTypeMap.getSingleton().getMimeTypeFromExtension(it.lowercase()) }
@@ -1598,10 +1598,10 @@ class MainActivity : AppCompatActivity() {
         AppFileLogger.log(
             this,
             "DOWNLOAD",
-            "startDownload url=" + AppFileLogger.safeString(url) +
+            "startDownload url=" + AppFileLogger.safeUrl(url) +
                 " mime=" + mimeType +
                 " disposition=" + AppFileLogger.safeString(contentDisposition) +
-                " referer=" + AppFileLogger.safeString(referer)
+                " referer=" + AppFileLogger.safeUrl(referer)
         )
         try {
             val parsedUri = Uri.parse(url)
