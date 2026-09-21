@@ -780,7 +780,7 @@ class MainActivity : AppCompatActivity() {
                 }
             }
 
-    private fun isGoogleCaptchaResource(uri: Uri?): Boolean {
+            private fun isGoogleCaptchaResource(uri: Uri?): Boolean {
                 val host = uri?.host?.lowercase() ?: return false
                 val path = uri.path?.lowercase() ?: ""
                 return host == "recaptcha.net" ||
