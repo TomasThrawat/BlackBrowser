@@ -571,14 +571,14 @@ class MainActivity : AppCompatActivity() {
                 view: WebView?,
                 detail: android.webkit.RenderProcessGoneDetail?
             ): Boolean {
-                AppFileLogger.log(
+                AppFileLogger.logNow(
                     this@MainActivity,
                     "WEBVIEW_RENDER",
                     "rendererGone didCrash=" + detail?.didCrash() +
                         " priorityAtExit=" + detail?.rendererPriorityAtExit() +
                         " url=" + AppFileLogger.safeUrl(view?.url)
                 )
-                AppFileLogger.trace(
+                AppFileLogger.traceNow(
                     this@MainActivity,
                     "RENDERER_GONE",
                     "didCrash=" + detail?.didCrash() +
@@ -753,17 +753,34 @@ class MainActivity : AppCompatActivity() {
                 if (AdBlockPrefs.isEnabled(this@MainActivity) &&
                     !isGooglePage(runCatching { Uri.parse(view?.url) }.getOrNull())
                 ) {
-                    val css = org.json.JSONObject.quote(AdBlocker.cosmeticHideCss())
-                    view?.evaluateJavascript(
-                        "(function(){var s=document.createElement('style');" +
-                            "s.type='text/css';s.appendChild(document.createTextNode($css));" +
-                            "document.head.appendChild(s);})();",
-                        null
+                    injectCosmeticCss(view)
+                }
+            }
+
+            private fun injectCosmeticCss(view: WebView?) {
+                if (view == null) return
+                val css = org.json.JSONObject.quote(AdBlocker.cosmeticHideCss())
+                val script = "(function(){try{" +
+                    "var parent=document.head||document.documentElement;" +
+                    "if(!parent)return;" +
+                    "var style=document.createElement('style');" +
+                    "style.type='text/css';" +
+                    "style.textContent=$css;" +
+                    "parent.appendChild(style);" +
+                    "}catch(e){}})();"
+                try {
+                    view.evaluateJavascript(script, null)
+                } catch (t: Throwable) {
+                    AppFileLogger.logExceptionNow(
+                        this,
+                        "WEBVIEW_CSS",
+                        "cosmetic CSS injection failed",
+                        t
                     )
                 }
             }
 
-            private fun isGoogleCaptchaResource(uri: Uri?): Boolean {
+    private fun isGoogleCaptchaResource(uri: Uri?): Boolean {
                 val host = uri?.host?.lowercase() ?: return false
                 val path = uri.path?.lowercase() ?: ""
                 return host == "recaptcha.net" ||
@@ -997,24 +1014,29 @@ class MainActivity : AppCompatActivity() {
         }
 
         wv.setDownloadListener { url, userAgent, contentDisposition, mimeType, contentLength ->
-            AppFileLogger.log(
-                this,
-                "DOWNLOAD",
-                "listener url=" + AppFileLogger.safeString(url) +
-                    " mime=" + mimeType +
-                    " length=" + contentLength +
-                    " disposition=" + AppFileLogger.safeString(contentDisposition) +
-                    " referer=" + AppFileLogger.safeString(wv.url)
-            )
-            AppFileLogger.trace(
-                this,
-                "DOWNLOAD_START",
-                "url=" + AppFileLogger.safeUrl(url) +
-                    " mime=" + AppFileLogger.safeString(mimeType) +
-                    " length=" + contentLength +
-                    " referer=" + AppFileLogger.safeUrl(wv.url)
-            )
-            startDownload(url, userAgent, contentDisposition, mimeType, wv.url)
+            try {
+                AppFileLogger.logNow(
+                    this,
+                    "DOWNLOAD",
+                    "listener url=" + AppFileLogger.safeString(url) +
+                        " mime=" + mimeType +
+                        " length=" + contentLength +
+                        " disposition=" + AppFileLogger.safeString(contentDisposition) +
+                        " referer=" + AppFileLogger.safeString(wv.url)
+                )
+                AppFileLogger.traceNow(
+                    this,
+                    "DOWNLOAD_START",
+                    "url=" + AppFileLogger.safeUrl(url) +
+                        " mime=" + AppFileLogger.safeString(mimeType) +
+                        " length=" + contentLength +
+                        " referer=" + AppFileLogger.safeUrl(wv.url)
+                )
+                startDownload(url, userAgent, contentDisposition, mimeType, wv.url)
+            } catch (t: Throwable) {
+                AppFileLogger.logExceptionNow(this, "DOWNLOAD", "download listener failed", t)
+                Toast.makeText(this, getString(R.string.download_failed), Toast.LENGTH_SHORT).show()
+            }
         }
 
         // Press-and-hold on an <img> (e.g. a photo in a gallery/photos page) offers to
@@ -1284,7 +1306,7 @@ class MainActivity : AppCompatActivity() {
         mimeType: String,
         referer: String?
     ) {
-        AppFileLogger.log(this, "DOWNLOAD", "enqueueDownload entered")
+        AppFileLogger.logNow(this, "DOWNLOAD", "enqueueDownload entered")
         try {
             val parsedUri = Uri.parse(url)
             if (parsedUri.scheme?.lowercase() !in setOf("http", "https")) {
@@ -1322,13 +1344,13 @@ class MainActivity : AppCompatActivity() {
                 Toast.makeText(this, getString(R.string.download_failed), Toast.LENGTH_SHORT).show()
                 return
             }
-            AppFileLogger.log(this, "DOWNLOAD", "calling DownloadManager.enqueue")
+            AppFileLogger.logNow(this, "DOWNLOAD", "calling DownloadManager.enqueue")
             val downloadId = dm.enqueue(request)
             synchronized(appDownloadIds) {
                 appDownloadIds.add(downloadId)
             }
-            AppFileLogger.log(this, "DOWNLOAD", "enqueue succeeded id=" + downloadId)
-            AppFileLogger.trace(
+            AppFileLogger.logNow(this, "DOWNLOAD", "enqueue succeeded id=" + downloadId)
+            AppFileLogger.traceNow(
                 this,
                 "DOWNLOAD_ENQUEUED",
                 "id=" + downloadId + " fileName=" + AppFileLogger.safeString(fileName) +

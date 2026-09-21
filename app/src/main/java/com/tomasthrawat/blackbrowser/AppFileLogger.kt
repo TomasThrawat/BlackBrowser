@@ -63,6 +63,24 @@ object AppFileLogger {
         log(app, "LOGGER", "uncaught exception handler installed")
     }
 
+    fun traceNow(context: Context, event: String, details: String = "") {
+        val app = context.applicationContext
+        val line = formatLine("TRACE:" + event, details)
+        try {
+            appendLine(app, line, traceFile = true)
+        } catch (_: Throwable) {
+        }
+    }
+
+    fun logNow(context: Context, tag: String, message: String) {
+        val app = context.applicationContext
+        val line = formatLine(tag, message)
+        try {
+            appendLine(app, line)
+        } catch (_: Throwable) {
+        }
+    }
+
     fun log(context: Context, tag: String, message: String) {
         val app = context.applicationContext
         val line = formatLine(tag, message)
