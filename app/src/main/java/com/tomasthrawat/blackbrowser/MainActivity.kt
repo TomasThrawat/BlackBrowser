@@ -458,32 +458,6 @@ class MainActivity : AppCompatActivity() {
                     return true
                 }
 
-                // Google homepage search submits a generated /search URL with transient
-                // parameters. Normalize only main-frame GET searches to the stable URL used by
-                // BrowserNavigation. POST navigations and all non-search URLs are untouched.
-                if (request.isForMainFrame &&
-                    request.method?.equals("GET", ignoreCase = true) != false &&
-                    (url.host.equals("www.google.com", ignoreCase = true) ||
-                        url.host.equals("google.com", ignoreCase = true)) &&
-                    url.path.equals("/search", ignoreCase = true)
-                ) {
-                    val query = url.getQueryParameter("q")?.trim().orEmpty()
-                    val isAlreadyCompact =
-                        url.getQueryParameter("gbv") == "1"
-
-                    if (query.isNotEmpty() && !isAlreadyCompact) {
-                        val compactUrl = BrowserNavigation.googleSearchUrl(query)
-                        AppFileLogger.log(
-                            this@MainActivity,
-                            "SEARCH",
-                            "normalized Google Search query=" +
-                                AppFileLogger.safeString(query)
-                        )
-                        view?.loadUrlHonest(compactUrl)
-                        return true
-                    }
-                }
-
                 // Link clicks and JS/meta redirects land here (unlike loadUrlHonest's
                 // app-initiated loads), so the UA has to be corrected for the new
                 // destination here too, before letting the load through. See loadUrlHonest's

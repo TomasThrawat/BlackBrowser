@@ -7,7 +7,7 @@ object BrowserNavigation {
     private const val SEARCH_URL = "https://www.google.com/search"
 
     fun googleSearchUrl(query: String): String =
-        SEARCH_URL + "?gbv=1&q=" + encodeQuery(query)
+        SEARCH_URL + "?q=" + encodeQuery(query)
 
     fun toUrl(rawInput: String): String {
         val input = rawInput.trim()
