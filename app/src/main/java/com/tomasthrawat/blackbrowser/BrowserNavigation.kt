@@ -4,7 +4,10 @@ import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 
 object BrowserNavigation {
-    private const val SEARCH_URL = "https://www.google.com/search?q="
+    private const val SEARCH_URL = "https://www.google.com/search"
+
+    fun googleSearchUrl(query: String): String =
+        SEARCH_URL + "?gbv=1&q=" + encodeQuery(query)
 
     fun toUrl(rawInput: String): String {
         val input = rawInput.trim()
@@ -18,7 +21,7 @@ object BrowserNavigation {
                 else -> "https://" + input
             }
         } else {
-            SEARCH_URL + encodeQuery(input)
+            googleSearchUrl(input)
         }
     }
 

@@ -20,15 +20,22 @@ class BrowserNavigationTest {
 
     @Test fun plainText_becomesSearch() {
         val result = BrowserNavigation.toUrl("hello world")
-        assertEquals("https://www.google.com/search?q=hello%20world", result)
-        assertTrue(result.startsWith("https://www.google.com/search?q="))
+        assertEquals("https://www.google.com/search?gbv=1&q=hello%20world", result)
+        assertTrue(result.startsWith("https://www.google.com/search?gbv=1&q="))
         assertTrue(result.contains("hello%20world"))
     }
 
     @Test fun searchQuery_specialCharacters_areEncoded() {
         assertEquals(
-            "https://www.google.com/search?q=C%2B%2B%20android",
+            "https://www.google.com/search?gbv=1&q=C%2B%2B%20android",
             BrowserNavigation.toUrl("C++ android")
+        )
+    }
+
+    @Test fun googleSearchUrl_buildsCompactQueryUrl() {
+        assertEquals(
+            "https://www.google.com/search?gbv=1&q=hello%20world",
+            BrowserNavigation.googleSearchUrl("hello world")
         )
     }
 }
