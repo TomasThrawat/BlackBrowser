@@ -4,11 +4,11 @@ plugins {
 }
 
 android {
-    namespace 'com.tomstrawat.blackbrowser'
+    namespace 'com.tomasthrawat.blackbrowser'
     compileSdk 34
 
     defaultConfig {
-        applicationId "com.tomstrawat.blackbrowser"
+        applicationId "com.tomasthrawat.blackbrowser"
         minSdk 24
         targetSdk 34
         versionCode 145
