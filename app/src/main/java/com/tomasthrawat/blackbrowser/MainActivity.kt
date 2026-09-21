@@ -186,6 +186,9 @@ class MainActivity : AppCompatActivity() {
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
+        AppFileLogger.initialize(this)
+        AppFileLogger.installCrashHandler(this)
+        AppFileLogger.log(this, "APP", "onCreate sdk=" + Build.VERSION.SDK_INT + " model=" + Build.MODEL)
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
@@ -256,7 +259,13 @@ class MainActivity : AppCompatActivity() {
         }
 
         btnDownloads.setOnClickListener {
-            showDownloadsDialog()
+            AppFileLogger.log(this, "DOWNLOADS_UI", "downloads button clicked")
+            try {
+                showDownloadsDialog()
+            } catch (t: Throwable) {
+                AppFileLogger.logExceptionNow(this, "DOWNLOADS_UI", "showDownloadsDialog crashed", t)
+                Toast.makeText(this, getString(R.string.download_failed), Toast.LENGTH_SHORT).show()
+            }
         }
 
         btnTabsBox.setOnClickListener {
@@ -320,6 +329,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        AppFileLogger.log(this, "LIFECYCLE", "onDestroy")
         historyExecutor.shutdownNow()
         synchronized(appDownloadIds) {
             appDownloadIds.clear()
@@ -484,11 +494,33 @@ class MainActivity : AppCompatActivity() {
                 return false
             }
 
+            override fun onRenderProcessGone(
+                view: WebView?,
+                detail: android.webkit.RenderProcessGoneDetail?
+            ): Boolean {
+                AppFileLogger.log(
+                    this@MainActivity,
+                    "WEBVIEW_RENDER",
+                    "rendererGone didCrash=" + detail?.didCrash() +
+                        " priorityAtExit=" + detail?.rendererPriorityAtExit() +
+                        " url=" + AppFileLogger.safeString(view?.url)
+                )
+                return super.onRenderProcessGone(view, detail)
+            }
+
             override fun onReceivedError(
                 view: WebView?,
                 request: WebResourceRequest?,
                 error: WebResourceError?
             ) {
+                AppFileLogger.log(
+                    this@MainActivity,
+                    "WEBVIEW_ERROR",
+                    "mainFrame=" + request?.isForMainFrame +
+                        " url=" + AppFileLogger.safeUri(request?.url) +
+                        " code=" + error?.errorCode +
+                        " description=" + error?.description
+                )
                 super.onReceivedError(view, request, error)
                 if (request?.isForMainFrame == true && view != null &&
                     inFlightAppNavigationUrls[view] == request.url.toString()
@@ -498,6 +530,7 @@ class MainActivity : AppCompatActivity() {
             }
 
             override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
+                AppFileLogger.log(this@MainActivity, "WEBVIEW", "pageStarted url=" + AppFileLogger.safeString(url))
                 super.onPageStarted(view, url, favicon)
                 // Once Chromium has actually started the main-frame navigation, the original
                 // app dispatch has happened. Release the guard so a later deliberate navigation
@@ -508,6 +541,7 @@ class MainActivity : AppCompatActivity() {
             }
 
             override fun onPageFinished(view: WebView?, url: String?) {
+                AppFileLogger.log(this@MainActivity, "WEBVIEW", "pageFinished url=" + AppFileLogger.safeString(url))
                 super.onPageFinished(view, url)
                 if (view != null && url != null && inFlightAppNavigationUrls[view] == url) {
                     inFlightAppNavigationUrls.remove(view)
@@ -700,7 +734,16 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        wv.setDownloadListener { url, userAgent, contentDisposition, mimeType, _ ->
+        wv.setDownloadListener { url, userAgent, contentDisposition, mimeType, contentLength ->
+            AppFileLogger.log(
+                this,
+                "DOWNLOAD",
+                "listener url=" + AppFileLogger.safeString(url) +
+                    " mime=" + mimeType +
+                    " length=" + contentLength +
+                    " disposition=" + AppFileLogger.safeString(contentDisposition) +
+                    " referer=" + AppFileLogger.safeString(wv.url)
+            )
             startDownload(url, userAgent, contentDisposition, mimeType, wv.url)
         }
 
@@ -903,6 +946,7 @@ class MainActivity : AppCompatActivity() {
     // below so it goes through the same storage-permission / DownloadManager path as
     // every other download in the app instead of a separate one-off code path.
     private fun confirmDownloadImage(wv: WebView, imageUrl: String) {
+        AppFileLogger.log(this, "DOWNLOAD", "image dialog url=" + AppFileLogger.safeString(imageUrl))
         val guessedMime = imageUrl.substringAfterLast('.', "").substringBefore('?')
             .takeIf { it.isNotBlank() }
             ?.let { MimeTypeMap.getSingleton().getMimeTypeFromExtension(it.lowercase()) }
@@ -910,6 +954,7 @@ class MainActivity : AppCompatActivity() {
         AlertDialog.Builder(this)
             .setTitle(R.string.save_image_dialog_title)
             .setPositiveButton(R.string.save_image_action) { _, _ ->
+                AppFileLogger.log(this, "DOWNLOAD", "image download confirmed mime=" + guessedMime)
                 startDownload(imageUrl, wv.settings.userAgentString, "", guessedMime, wv.url)
             }
             .setNegativeButton(android.R.string.cancel, null)
@@ -923,27 +968,43 @@ class MainActivity : AppCompatActivity() {
         mimeType: String,
         referer: String?
     ) {
-        val parsedUri = runCatching { Uri.parse(url) }.getOrNull()
-        if (parsedUri?.scheme?.lowercase() !in setOf("http", "https")) {
+        AppFileLogger.log(
+            this,
+            "DOWNLOAD",
+            "startDownload url=" + AppFileLogger.safeString(url) +
+                " mime=" + mimeType +
+                " disposition=" + AppFileLogger.safeString(contentDisposition) +
+                " referer=" + AppFileLogger.safeString(referer)
+        )
+        try {
+            val parsedUri = Uri.parse(url)
+            if (parsedUri.scheme?.lowercase() !in setOf("http", "https")) {
+                AppFileLogger.log(this, "DOWNLOAD", "rejected unsupported scheme=" + parsedUri.scheme)
+                Toast.makeText(this, getString(R.string.download_failed), Toast.LENGTH_SHORT).show()
+                return
+            }
+
+            val needsLegacyStoragePermission = Build.VERSION.SDK_INT <= Build.VERSION_CODES.P &&
+                ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) !=
+                PackageManager.PERMISSION_GRANTED
+            AppFileLogger.log(this, "DOWNLOAD", "legacyStoragePermissionNeeded=" + needsLegacyStoragePermission)
+
+            if (needsLegacyStoragePermission) {
+                pendingDownload = PendingDownload(url, userAgent, contentDisposition, mimeType, referer)
+                AppFileLogger.log(this, "DOWNLOAD", "requesting WRITE_EXTERNAL_STORAGE")
+                ActivityCompat.requestPermissions(
+                    this,
+                    arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE),
+                    REQUEST_STORAGE_PERMISSION
+                )
+                return
+            }
+
+            enqueueDownload(url, userAgent, contentDisposition, mimeType, referer)
+        } catch (t: Throwable) {
+            AppFileLogger.logExceptionNow(this, "DOWNLOAD", "startDownload crashed", t)
             Toast.makeText(this, getString(R.string.download_failed), Toast.LENGTH_SHORT).show()
-            return
         }
-
-        val needsLegacyStoragePermission = Build.VERSION.SDK_INT <= Build.VERSION_CODES.P &&
-            ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) !=
-            PackageManager.PERMISSION_GRANTED
-
-        if (needsLegacyStoragePermission) {
-            pendingDownload = PendingDownload(url, userAgent, contentDisposition, mimeType, referer)
-            ActivityCompat.requestPermissions(
-                this,
-                arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE),
-                REQUEST_STORAGE_PERMISSION
-            )
-            return
-        }
-
-        enqueueDownload(url, userAgent, contentDisposition, mimeType, referer)
     }
 
     private fun enqueueDownload(
@@ -953,6 +1014,7 @@ class MainActivity : AppCompatActivity() {
         mimeType: String,
         referer: String?
     ) {
+        AppFileLogger.log(this, "DOWNLOAD", "enqueueDownload entered")
         try {
             val parsedUri = Uri.parse(url)
             if (parsedUri.scheme?.lowercase() !in setOf("http", "https")) {
@@ -961,6 +1023,7 @@ class MainActivity : AppCompatActivity() {
             }
 
             val fileName = resolveDownloadFileName(url, contentDisposition, mimeType)
+            AppFileLogger.log(this, "DOWNLOAD", "resolved fileName=" + AppFileLogger.safeString(fileName))
             val effectiveMimeType = mimeType.trim().ifBlank {
                 MimeTypeMap.getSingleton().getMimeTypeFromExtension(
                     fileName.substringAfterLast('.', "").lowercase()
@@ -985,15 +1048,19 @@ class MainActivity : AppCompatActivity() {
                 setAllowedOverRoaming(true)
             }
             val dm = getSystemService(Context.DOWNLOAD_SERVICE) as? DownloadManager ?: run {
+                AppFileLogger.log(this, "DOWNLOAD", "DownloadManager service unavailable")
                 Toast.makeText(this, getString(R.string.download_failed), Toast.LENGTH_SHORT).show()
                 return
             }
+            AppFileLogger.log(this, "DOWNLOAD", "calling DownloadManager.enqueue")
             val downloadId = dm.enqueue(request)
             synchronized(appDownloadIds) {
                 appDownloadIds.add(downloadId)
             }
+            AppFileLogger.log(this, "DOWNLOAD", "enqueue succeeded id=" + downloadId)
             Toast.makeText(this, getString(R.string.download_started, fileName), Toast.LENGTH_SHORT).show()
-        } catch (_: Exception) {
+        } catch (t: Throwable) {
+            AppFileLogger.logExceptionNow(this, "DOWNLOAD", "enqueueDownload crashed", t)
             Toast.makeText(this, getString(R.string.download_failed), Toast.LENGTH_SHORT).show()
         }
     }

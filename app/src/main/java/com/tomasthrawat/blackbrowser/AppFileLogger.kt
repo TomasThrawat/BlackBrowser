@@ -1,4 +1,4 @@
-package com.tomstrawat.blackbrowser
+package com.tomasthrawat.blackbrowser
 
 import android.content.ContentValues
 import android.content.Context
