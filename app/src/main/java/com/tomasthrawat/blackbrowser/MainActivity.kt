@@ -510,7 +510,74 @@ class MainActivity : AppCompatActivity() {
                         " priorityAtExit=" + detail?.rendererPriorityAtExit() +
                         " url=" + AppFileLogger.safeString(view?.url)
                 )
-                return super.onRenderProcessGone(view, detail)
+
+                val crashedView = view ?: return true
+                val tabIndex = tabs.indexOfFirst { it.webView === crashedView }
+                if (tabIndex !in tabs.indices) {
+                    try {
+                        crashedView.destroy()
+                    } catch (_: Throwable) {
+                    }
+                    return true
+                }
+
+                val oldTab = tabs[tabIndex]
+                val restoreUrl = oldTab.url.ifBlank { homeUrl }
+
+                webViewContainer.removeView(crashedView)
+                try {
+                    crashedView.stopLoading()
+                } catch (_: Throwable) {
+                }
+                try {
+                    crashedView.destroy()
+                } catch (_: Throwable) {
+                }
+
+                val replacement = try {
+                    createWebView(oldTab.isIncognito)
+                } catch (t: Throwable) {
+                    AppFileLogger.logExceptionNow(
+                        this@MainActivity,
+                        "WEBVIEW_RENDER",
+                        "failed to recreate renderer WebView",
+                        t
+                    )
+                    Toast.makeText(
+                        this@MainActivity,
+                        getString(R.string.webview_renderer_recovery_failed),
+                        Toast.LENGTH_SHORT
+                    ).show()
+                    tabs.removeAt(tabIndex)
+                    currentTabIndex = currentTabIndex.coerceIn(0, (tabs.size - 1).coerceAtLeast(0))
+                    if (tabs.isEmpty()) {
+                        addNewTab()
+                    } else {
+                        switchToTab(currentTabIndex)
+                    }
+                    updateTabsBoxCount()
+                    return true
+                }
+
+                tabs[tabIndex] = oldTab.copy(webView = replacement)
+                replacement.loadUrlHonest(restoreUrl)
+                updateTabsBoxCount()
+
+                if (tabIndex == currentTabIndex) {
+                    CookieManager.getInstance().setAcceptCookie(!oldTab.isIncognito)
+                    CookieManager.getInstance().setAcceptThirdPartyCookies(
+                        replacement,
+                        !oldTab.isIncognito
+                    )
+                    replacement.onResume()
+                    replacement.settings.offscreenPreRaster = true
+                    webViewContainer.removeAllViews()
+                    webViewContainer.addView(replacement)
+                    editUrl.setText(restoreUrl)
+                    updateDefaultBrowserButtonVisibility()
+                }
+
+                return true
             }
 
             override fun onReceivedError(
@@ -638,6 +705,24 @@ class MainActivity : AppCompatActivity() {
                 popup.settings.javaScriptEnabled = true
                 popup.settings.domStorageEnabled = true
                 popup.webViewClient = object : WebViewClient() {
+                    override fun onRenderProcessGone(
+                        v: WebView?,
+                        detail: android.webkit.RenderProcessGoneDetail?
+                    ): Boolean {
+                        AppFileLogger.log(
+                            this@MainActivity,
+                            "WEBVIEW_RENDER",
+                            "popupRendererGone didCrash=" + detail?.didCrash() +
+                                " priorityAtExit=" + detail?.rendererPriorityAtExit() +
+                                " url=" + AppFileLogger.safeString(v?.url)
+                        )
+                        try {
+                            v?.destroy()
+                        } catch (_: Throwable) {
+                        }
+                        return true
+                    }
+
                     override fun shouldOverrideUrlLoading(
                         v: WebView?,
                         request: WebResourceRequest?

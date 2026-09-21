@@ -10,6 +10,7 @@
     <string name="download_failed">فشل التحميل</string>
     <string name="download_permission_denied">لازم صلاحية التخزين عشان التحميل يشتغل</string>
     <string name="download_open_failed">معرفتش افتح الملف اللي اتحمل</string>
+    <string name="webview_renderer_recovery_failed">حصلت مشكلة في عرض الصفحة، حاولت أفتحها من جديد</string>
     <string name="set_default_browser_desc">تعيين كمتصفح افتراضي</string>
     <string name="set_default_browser_failed">معرفتش افتح إعدادات المتصفح الافتراضي</string>
     <string name="tabs_desc">التبويبات المفتوحة</string>
