@@ -25,6 +25,9 @@ object AppFileLogger {
     private const val PREFS = "blackbrowser_debug_logging"
     private const val KEY_URI = "log_uri"
     private const val FILE_NAME = "BlackBrowser-debug.log"
+    private const val TRACE_PREFS = "blackbrowser_trace_logging"
+    private const val TRACE_KEY_URI = "trace_uri"
+    private const val TRACE_FILE_NAME = "BlackBrowser-trace.log"
     private const val MIME_TYPE = "text/plain"
 
     private val executor = Executors.newSingleThreadExecutor()
@@ -33,6 +36,18 @@ object AppFileLogger {
     fun initialize(context: Context) {
         val app = context.applicationContext
         log(app, "LOGGER", "initialized sdk=" + Build.VERSION.SDK_INT + " model=" + Build.MODEL)
+        trace(app, "SESSION", "start sdk=" + Build.VERSION.SDK_INT + " model=" + Build.MODEL)
+    }
+
+    fun trace(context: Context, event: String, details: String = "") {
+        val app = context.applicationContext
+        val line = formatLine("TRACE:" + event, details)
+        try {
+            executor.execute {
+                appendLine(app, line, traceFile = true)
+            }
+        } catch (_: Throwable) {
+        }
     }
 
     fun installCrashHandler(context: Context) {
@@ -80,6 +95,40 @@ object AppFileLogger {
     fun safeString(value: String?): String =
         value?.replace("\n", "\\n")?.replace("\r", "\\r") ?: "<null>"
 
+    fun safeUrl(value: String?): String {
+        if (value.isNullOrBlank()) return "<null>"
+        return try {
+            val uri = Uri.parse(value)
+            val builder = Uri.Builder()
+            uri.scheme?.let(builder::scheme)
+            uri.authority?.let(builder::authority)
+            uri.path?.let(builder::path)
+            val redacted = mutableListOf<Pair<String, String>>()
+            for (name in uri.queryParameterNames) {
+                val lower = name.lowercase(Locale.US)
+                val sensitive = lower.contains("token") ||
+                    lower.contains("secret") ||
+                    lower.contains("password") ||
+                    lower == "code" ||
+                    lower.contains("auth") ||
+                    lower.contains("signature") ||
+                    lower == "sig" ||
+                    lower.startsWith("x-amz-")
+                redacted.add(name to if (sensitive) "<redacted>" else (uri.getQueryParameter(name) ?: ""))
+            }
+            if (redacted.isNotEmpty()) {
+                builder.encodedQuery(
+                    redacted.joinToString("&") { (name, queryValue) ->
+                        Uri.encode(name) + "=" + Uri.encode(queryValue)
+                    }
+                )
+            }
+            builder.build().toString()
+        } catch (_: Throwable) {
+            safeString(value)
+        }
+    }
+
     fun safeUri(uri: Uri?): String = uri?.let {
         try {
             val builder = Uri.Builder()
@@ -98,10 +147,10 @@ object AppFileLogger {
             message + "\n"
     }
 
-    private fun appendLine(context: Context, line: String) {
+    private fun appendLine(context: Context, line: String, traceFile: Boolean = false) {
         synchronized(lock) {
             try {
-                val uri = ensureLogUri(context) ?: return
+                val uri = if (traceFile) { ensureTraceUri(context) } else { ensureLogUri(context) } ?: return
                 context.contentResolver.openOutputStream(uri, "wa")?.use { output ->
                     output.write(line.toByteArray(Charsets.UTF_8))
                     output.flush()
@@ -143,4 +192,37 @@ object AppFileLogger {
             Uri.fromFile(File(downloads, FILE_NAME))
         }
     }
+    private fun ensureTraceUri(context: Context): Uri? {
+        val prefs = context.getSharedPreferences(TRACE_PREFS, Context.MODE_PRIVATE)
+        val existing = prefs.getString(TRACE_KEY_URI, null)?.let {
+            try {
+                Uri.parse(it)
+            } catch (_: Throwable) {
+                null
+            }
+        }
+        if (existing != null) return existing
+
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val values = ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, TRACE_FILE_NAME)
+                put(MediaStore.MediaColumns.MIME_TYPE, MIME_TYPE)
+                put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+                put(MediaStore.MediaColumns.IS_PENDING, 0)
+            }
+            val uri = context.contentResolver.insert(
+                MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                values
+            ) ?: return null
+            prefs.edit().putString(TRACE_KEY_URI, uri.toString()).apply()
+            uri
+        } else {
+            val downloads = Environment.getExternalStoragePublicDirectory(
+                Environment.DIRECTORY_DOWNLOADS
+            )
+            if (!downloads.exists() && !downloads.mkdirs()) return null
+            Uri.fromFile(File(downloads, TRACE_FILE_NAME))
+        }
+    }
+
 }

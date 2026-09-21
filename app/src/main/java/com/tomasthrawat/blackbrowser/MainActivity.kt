@@ -11,6 +11,8 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.graphics.Color
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -182,6 +184,13 @@ class MainActivity : AppCompatActivity() {
                             " mime=" + AppFileLogger.safeString(mime)
                     )
 
+                    AppFileLogger.trace(
+                        context,
+                        "DOWNLOAD_COMPLETE",
+                        "id=" + id + " status=" + status + " reason=" + reason +
+                            " mime=" + AppFileLogger.safeString(mime)
+                    )
+
                     if (status == DownloadManager.STATUS_FAILED) {
                         Toast.makeText(
                             context,
@@ -209,6 +218,13 @@ class MainActivity : AppCompatActivity() {
         AppFileLogger.log(this, "APP", "onCreate sdk=" + Build.VERSION.SDK_INT + " model=" + Build.MODEL)
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+        AppFileLogger.trace(
+            this,
+            "APP_CREATE",
+            "desktopMode=" + DesktopModePrefs.isEnabled(this) +
+                " adBlock=" + AdBlockPrefs.isEnabled(this) +
+                " network=" + networkTransportSummary()
+        )
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
@@ -308,10 +324,12 @@ class MainActivity : AppCompatActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        AppFileLogger.trace(this, "NEW_INTENT", "data=" + AppFileLogger.safeUrl(intent.dataString))
         intent.dataString?.let { addNewTab(it) }
     }
 
     override fun onPause() {
+        AppFileLogger.trace(this, "ACTIVITY_PAUSE", "tab=" + currentTabIndex)
         super.onPause()
         // The activity losing foreground means no tab is actually being watched right
         // now either -- same reasoning as pausing a backgrounded tab in switchToTab().
@@ -319,12 +337,14 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onResume() {
+        AppFileLogger.trace(this, "ACTIVITY_RESUME", "tab=" + currentTabIndex)
         super.onResume()
         tabs.getOrNull(currentTabIndex)?.webView?.onResume()
         updateDefaultBrowserButtonVisibility()
     }
 
     override fun onStart() {
+        AppFileLogger.trace(this, "ACTIVITY_START", "tab=" + currentTabIndex)
         super.onStart()
         ContextCompat.registerReceiver(
             this,
@@ -335,6 +355,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onStop() {
+        AppFileLogger.trace(this, "ACTIVITY_STOP", "tab=" + currentTabIndex)
         super.onStop()
         // Persist cookies to disk now (not just periodically) so a session/login started
         // right before the app is backgrounded or killed is not silently lost.
@@ -347,6 +368,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        AppFileLogger.trace(this, "ACTIVITY_DESTROY", "tab=" + currentTabIndex)
         AppFileLogger.log(this, "LIFECYCLE", "onDestroy")
         historyExecutor.shutdownNow()
         synchronized(appDownloadIds) {
@@ -436,6 +458,18 @@ class MainActivity : AppCompatActivity() {
             ): Boolean {
                 val url = request?.url ?: return false
 
+                AppFileLogger.trace(
+                    this@MainActivity,
+                    "NAV_INTERCEPT",
+                    "mainFrame=" + request.isForMainFrame +
+                        " method=" + AppFileLogger.safeString(request.method) +
+                        " gesture=" + request.hasGesture() +
+                        " url=" + AppFileLogger.safeUrl(url.toString()) +
+                        " current=" + AppFileLogger.safeUrl(view?.url) +
+                        " desktopMode=" + DesktopModePrefs.isEnabled(this@MainActivity) +
+                        " ua=" + AppFileLogger.safeString(view?.settings?.userAgentString)
+                )
+
                 // Google Search submits a dynamic URL with many transient parameters. Normalize
                 // main-frame search navigations before WebView starts the request so the browser
                 // keeps one stable, compact search URL instead of replaying that generated URL.
@@ -483,8 +517,9 @@ class MainActivity : AppCompatActivity() {
                 // the disguised UA and never replay a cached redirect-chain response; every
                 // other host keeps the plain UA and LOAD_DEFAULT.
                 val isGoogleSettingsNavigation = isGoogleSettingsUrl(url)
+                val needsUaSpoof = !isGoogleSettingsNavigation && hostNeedsUaSpoof(url.host)
                 val needsFreshLoad = !isGoogleSettingsNavigation &&
-                    (hostNeedsUaSpoof(url.host) || (view?.cameFromIdentityProvider() == true))
+                    (needsUaSpoof || (view?.cameFromIdentityProvider() == true))
                 // A POST navigation -- e.g. the form submit Google's account-chooser step
                 // does the moment an account is tapped -- carries a body that
                 // WebResourceRequest never exposes; there is no way to read it back out to
@@ -511,9 +546,24 @@ class MainActivity : AppCompatActivity() {
                     view?.loadUrlHonest(url.toString())
                     return true
                 }
-                view?.settings?.userAgentString = computeUserAgent(url.host, forceSpoof = needsFreshLoad)
-                view?.settings?.cacheMode =
-                    if (needsFreshLoad) WebSettings.LOAD_NO_CACHE else WebSettings.LOAD_DEFAULT
+                if (needsUaSpoof) {
+                    val targetUa = computeUserAgent(url.host, forceSpoof = true)
+                    if (view?.settings?.userAgentString != targetUa) {
+                        view?.settings?.userAgentString = targetUa
+                    }
+                }
+                if (view?.settings?.cacheMode != if (needsFreshLoad) WebSettings.LOAD_NO_CACHE else WebSettings.LOAD_DEFAULT) {
+                    view?.settings?.cacheMode =
+                        if (needsFreshLoad) WebSettings.LOAD_NO_CACHE else WebSettings.LOAD_DEFAULT
+                }
+                AppFileLogger.trace(
+                    this@MainActivity,
+                    "NAV_ALLOW",
+                    "fresh=" + needsFreshLoad +
+                        " uaSpoof=" + needsUaSpoof +
+                        " host=" + AppFileLogger.safeString(url.host) +
+                        " url=" + AppFileLogger.safeUrl(url.toString())
+                )
                 return false
             }
 
@@ -526,7 +576,14 @@ class MainActivity : AppCompatActivity() {
                     "WEBVIEW_RENDER",
                     "rendererGone didCrash=" + detail?.didCrash() +
                         " priorityAtExit=" + detail?.rendererPriorityAtExit() +
-                        " url=" + AppFileLogger.safeString(view?.url)
+                        " url=" + AppFileLogger.safeUrl(view?.url)
+                )
+                AppFileLogger.trace(
+                    this@MainActivity,
+                    "RENDERER_GONE",
+                    "didCrash=" + detail?.didCrash() +
+                        " priority=" + detail?.rendererPriorityAtExit() +
+                        " url=" + AppFileLogger.safeUrl(view?.url)
                 )
 
                 val crashedView = view ?: return true
@@ -607,9 +664,17 @@ class MainActivity : AppCompatActivity() {
                     this@MainActivity,
                     "WEBVIEW_ERROR",
                     "mainFrame=" + request?.isForMainFrame +
-                        " url=" + AppFileLogger.safeUri(request?.url) +
+                        " url=" + AppFileLogger.safeUrl(request?.url?.toString()) +
                         " code=" + error?.errorCode +
                         " description=" + error?.description
+                )
+                AppFileLogger.trace(
+                    this@MainActivity,
+                    "RESOURCE_ERROR",
+                    "mainFrame=" + request?.isForMainFrame +
+                        " code=" + error?.errorCode +
+                        " description=" + AppFileLogger.safeString(error?.description?.toString()) +
+                        " url=" + AppFileLogger.safeUrl(request?.url?.toString())
                 )
                 super.onReceivedError(view, request, error)
                 if (request?.isForMainFrame == true && view != null &&
@@ -619,8 +684,32 @@ class MainActivity : AppCompatActivity() {
                 }
             }
 
+            override fun onReceivedHttpError(
+                view: WebView?,
+                request: WebResourceRequest?,
+                errorResponse: WebResourceResponse?
+            ) {
+                AppFileLogger.trace(
+                    this@MainActivity,
+                    "HTTP_ERROR",
+                    "mainFrame=" + request?.isForMainFrame +
+                        " status=" + errorResponse?.statusCode +
+                        " reason=" + AppFileLogger.safeString(errorResponse?.reasonPhrase) +
+                        " mime=" + AppFileLogger.safeString(errorResponse?.mimeType) +
+                        " url=" + AppFileLogger.safeUrl(request?.url?.toString())
+                )
+                super.onReceivedHttpError(view, request, errorResponse)
+            }
+
             override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
-                AppFileLogger.log(this@MainActivity, "WEBVIEW", "pageStarted url=" + AppFileLogger.safeString(url))
+                AppFileLogger.log(this@MainActivity, "WEBVIEW", "pageStarted url=" + AppFileLogger.safeUrl(url))
+                AppFileLogger.trace(
+                    this@MainActivity,
+                    "PAGE_STARTED",
+                    "url=" + AppFileLogger.safeUrl(url) +
+                        " ua=" + AppFileLogger.safeString(view?.settings?.userAgentString) +
+                        " cache=" + view?.settings?.cacheMode
+                )
                 super.onPageStarted(view, url, favicon)
                 // Once Chromium has actually started the main-frame navigation, the original
                 // app dispatch has happened. Release the guard so a later deliberate navigation
@@ -631,7 +720,15 @@ class MainActivity : AppCompatActivity() {
             }
 
             override fun onPageFinished(view: WebView?, url: String?) {
-                AppFileLogger.log(this@MainActivity, "WEBVIEW", "pageFinished url=" + AppFileLogger.safeString(url))
+                AppFileLogger.log(this@MainActivity, "WEBVIEW", "pageFinished url=" + AppFileLogger.safeUrl(url))
+                AppFileLogger.trace(
+                    this@MainActivity,
+                    "PAGE_FINISHED",
+                    "url=" + AppFileLogger.safeUrl(url) +
+                        " title=" + AppFileLogger.safeString(view?.title) +
+                        " ua=" + AppFileLogger.safeString(view?.settings?.userAgentString) +
+                        " cookies=" + CookieManager.getInstance().hasCookies()
+                )
                 super.onPageFinished(view, url)
                 if (view != null && url != null && inFlightAppNavigationUrls[view] == url) {
                     inFlightAppNavigationUrls.remove(view)
@@ -708,6 +805,18 @@ class MainActivity : AppCompatActivity() {
             !isCloudflareChallenge &&
             !isGooglePage &&
             !isGoogleCaptcha
+                AppFileLogger.trace(
+                    this@MainActivity,
+                    "RESOURCE",
+                    "mainFrame=" + request?.isForMainFrame +
+                        " method=" + AppFileLogger.safeString(request?.method) +
+                        " blocked=" + willBlock +
+                        " googlePage=" + isGooglePage +
+                        " googleCaptcha=" + isGoogleCaptcha +
+                        " trusted=" + isTrustedHost +
+                        " cloudflareChallenge=" + isCloudflareChallenge +
+                        " url=" + AppFileLogger.safeUrl(url?.toString())
+                )
                 if (willBlock) {
                     return WebResourceResponse("text/plain", "UTF-8", ByteArrayInputStream(ByteArray(0)))
                 }
@@ -717,11 +826,32 @@ class MainActivity : AppCompatActivity() {
 
         wv.webChromeClient = object : WebChromeClient() {
             override fun onProgressChanged(view: WebView?, newProgress: Int) {
+                if (newProgress == 0 || newProgress == 25 || newProgress == 50 ||
+                    newProgress == 75 || newProgress == 100
+                ) {
+                    AppFileLogger.trace(
+                        this@MainActivity,
+                        "PROGRESS",
+                        "progress=" + newProgress + " url=" + AppFileLogger.safeUrl(view?.url)
+                    )
+                }
                 super.onProgressChanged(view, newProgress)
                 if (tabs.getOrNull(currentTabIndex)?.webView === view) {
                     progressBar.progress = newProgress
                     progressBar.visibility = if (newProgress in 1..99) ProgressBar.VISIBLE else ProgressBar.GONE
                 }
+            }
+
+            override fun onConsoleMessage(consoleMessage: android.webkit.ConsoleMessage?): Boolean {
+                AppFileLogger.trace(
+                    this@MainActivity,
+                    "CONSOLE",
+                    "level=" + consoleMessage?.messageLevel() +
+                        " source=" + AppFileLogger.safeString(consoleMessage?.sourceId()) +
+                        " line=" + consoleMessage?.lineNumber() +
+                        " message=" + AppFileLogger.safeString(consoleMessage?.message())
+                )
+                return super.onConsoleMessage(consoleMessage)
             }
 
             // Handles every window.open() request in one place: ad/tracker pop-unders are
@@ -876,6 +1006,14 @@ class MainActivity : AppCompatActivity() {
                     " length=" + contentLength +
                     " disposition=" + AppFileLogger.safeString(contentDisposition) +
                     " referer=" + AppFileLogger.safeString(wv.url)
+            )
+            AppFileLogger.trace(
+                this,
+                "DOWNLOAD_START",
+                "url=" + AppFileLogger.safeUrl(url) +
+                    " mime=" + AppFileLogger.safeString(mimeType) +
+                    " length=" + contentLength +
+                    " referer=" + AppFileLogger.safeUrl(wv.url)
             )
             startDownload(url, userAgent, contentDisposition, mimeType, wv.url)
         }
@@ -1191,6 +1329,12 @@ class MainActivity : AppCompatActivity() {
                 appDownloadIds.add(downloadId)
             }
             AppFileLogger.log(this, "DOWNLOAD", "enqueue succeeded id=" + downloadId)
+            AppFileLogger.trace(
+                this,
+                "DOWNLOAD_ENQUEUED",
+                "id=" + downloadId + " fileName=" + AppFileLogger.safeString(fileName) +
+                    " mime=" + AppFileLogger.safeString(effectiveMimeType)
+            )
             Toast.makeText(this, getString(R.string.download_started, fileName), Toast.LENGTH_SHORT).show()
         } catch (t: Throwable) {
             AppFileLogger.logExceptionNow(this, "DOWNLOAD", "enqueueDownload crashed", t)
@@ -1610,8 +1754,19 @@ class MainActivity : AppCompatActivity() {
         val isGoogleSettingsNavigation = parsedUrl?.let { isGoogleSettingsUrl(it) } == true
 
         if (isGoogleSettingsNavigation) {
-            settings.userAgentString = computeUserAgent(host, forceSpoof = false)
-            settings.cacheMode = WebSettings.LOAD_DEFAULT
+            val targetUa = computeUserAgent(host, forceSpoof = false)
+            if (settings.userAgentString != targetUa) {
+                settings.userAgentString = targetUa
+            }
+            if (settings.cacheMode != WebSettings.LOAD_DEFAULT) {
+                settings.cacheMode = WebSettings.LOAD_DEFAULT
+            }
+            AppFileLogger.trace(
+                this@MainActivity,
+                "APP_NAVIGATION",
+                "googleSettings=true url=" + AppFileLogger.safeUrl(url) +
+                    " ua=" + AppFileLogger.safeString(settings.userAgentString)
+            )
             loadUrl(url)
             return
         }
@@ -1624,9 +1779,25 @@ class MainActivity : AppCompatActivity() {
         // the server, as a different client mid-flow). Getting either wrong on its own was
         // enough to make the provider bounce the flow back to itself in a loop; every other
         // host keeps LOAD_DEFAULT and the plain UA so normal browsing is unaffected.
-        val needsFreshLoad = hostNeedsUaSpoof(host) || cameFromIdentityProvider()
-        settings.userAgentString = computeUserAgent(host, forceSpoof = needsFreshLoad)
-        settings.cacheMode = if (needsFreshLoad) WebSettings.LOAD_NO_CACHE else WebSettings.LOAD_DEFAULT
+        val needsIdentityNoCache = hostNeedsUaSpoof(host) || cameFromIdentityProvider()
+        val needsUaSpoof = hostNeedsUaSpoof(host)
+        val targetUa = computeUserAgent(host, forceSpoof = needsUaSpoof)
+        if (settings.userAgentString != targetUa) {
+            settings.userAgentString = targetUa
+        }
+        val targetCache = if (needsIdentityNoCache) WebSettings.LOAD_NO_CACHE else WebSettings.LOAD_DEFAULT
+        if (settings.cacheMode != targetCache) {
+            settings.cacheMode = targetCache
+        }
+        AppFileLogger.trace(
+            this@MainActivity,
+            "APP_NAVIGATION",
+            "url=" + AppFileLogger.safeUrl(url) +
+                " host=" + AppFileLogger.safeString(host) +
+                " uaSpoof=" + needsUaSpoof +
+                " noCache=" + needsIdentityNoCache +
+                " desktopMode=" + DesktopModePrefs.isEnabled(this@MainActivity)
+        )
         loadUrl(url)
     }
 
@@ -2014,6 +2185,25 @@ class MainActivity : AppCompatActivity() {
             activeWebView.goBack()
         } else {
             finish()
+        }
+    }
+
+    private fun networkTransportSummary(): String {
+        return try {
+            val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+                ?: return "unavailable"
+            val network = cm.activeNetwork ?: return "none"
+            val caps = cm.getNetworkCapabilities(network) ?: return "unknown"
+            val types = mutableListOf<String>()
+            if (caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) types.add("WIFI")
+            if (caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)) types.add("CELLULAR")
+            if (caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) types.add("VPN")
+            if (caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)) types.add("ETHERNET")
+            if (types.isEmpty()) types.add("OTHER")
+            types.joinToString("+") + " validated=" +
+                caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+        } catch (t: Throwable) {
+            "error:" + t.javaClass.simpleName
         }
     }
 
