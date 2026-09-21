@@ -1278,7 +1278,8 @@ class MainActivity : AppCompatActivity() {
         "api.twitter.com",
         "twitter.com",
         "x.com",
-        "login.yahoo.com"
+        "login.yahoo.com",
+        "github.com"
     )
 
     // Origin-match patterns (scheme + host, optional leading "*." wildcard for subdomains --
