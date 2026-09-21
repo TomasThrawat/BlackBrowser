@@ -468,18 +468,20 @@ class MainActivity : AppCompatActivity() {
                     url.path.equals("/search", ignoreCase = true)
                 ) {
                     val query = url.getQueryParameter("q")?.trim().orEmpty()
-                    if (query.isNotEmpty()) {
+                    val isAlreadyCompact =
+                        url.getQueryParameter("gbv") == "1" &&
+                            url.getQueryParameterNames() == setOf("gbv", "q")
+
+                    if (query.isNotEmpty() && !isAlreadyCompact) {
                         val compactUrl = BrowserNavigation.googleSearchUrl(query)
-                        if (compactUrl != url.toString()) {
-                            AppFileLogger.log(
-                                this@MainActivity,
-                                "SEARCH",
-                                "normalized Google Search query=" +
-                                    AppFileLogger.safeString(query)
-                            )
-                            view?.loadUrlHonest(compactUrl)
-                            return true
-                        }
+                        AppFileLogger.log(
+                            this@MainActivity,
+                            "SEARCH",
+                            "normalized Google Search query=" +
+                                AppFileLogger.safeString(query)
+                        )
+                        view?.loadUrlHonest(compactUrl)
+                        return true
                     }
                 }
 
