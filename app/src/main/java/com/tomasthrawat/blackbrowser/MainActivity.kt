@@ -141,38 +141,45 @@ class MainActivity : AppCompatActivity() {
 
     private var pendingDownload: PendingDownload? = null
 
+    // Keep only downloads started by this app eligible for completion handling. DownloadManager
+    // broadcasts are system-wide, so without this guard an unrelated app's download could enter
+    // this receiver while BlackBrowser is running.
+    private val appDownloadIds = mutableSetOf<Long>()
+
     // Serialize history writes so rapid navigation cannot race SharedPreferences read-modify-write cycles.
     private val historyExecutor = Executors.newSingleThreadExecutor()
 
     private val downloadCompleteReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
-            val id = intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1L)
-            if (id == -1L) return
+            try {
+                val id = intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1L)
+                if (id == -1L || !appDownloadIds.remove(id)) return
 
-            val dm = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
-            val cursor = dm.query(DownloadManager.Query().setFilterById(id))
-            cursor.use {
-                if (!it.moveToFirst()) return@use
+                val dm = context.getSystemService(Context.DOWNLOAD_SERVICE) as? DownloadManager ?: return
+                val cursor = dm.query(DownloadManager.Query().setFilterById(id)) ?: return
+                cursor.use {
+                    if (!it.moveToFirst()) return@use
 
-                val statusIdx = it.getColumnIndex(DownloadManager.COLUMN_STATUS)
-                val mimeIdx = it.getColumnIndex(DownloadManager.COLUMN_MEDIA_TYPE)
-                val status = if (statusIdx >= 0) it.getInt(statusIdx) else -1
-                val mime = if (mimeIdx >= 0) it.getString(mimeIdx) else null
+                    val statusIdx = it.getColumnIndex(DownloadManager.COLUMN_STATUS)
+                    val mimeIdx = it.getColumnIndex(DownloadManager.COLUMN_MEDIA_TYPE)
+                    val status = if (statusIdx >= 0) it.getInt(statusIdx) else -1
+                    val mime = if (mimeIdx >= 0) it.getString(mimeIdx) else null
 
-                if (status == DownloadManager.STATUS_SUCCESSFUL &&
-                    mime == "application/vnd.android.package-archive"
-                ) {
-                    try {
+                    if (status == DownloadManager.STATUS_SUCCESSFUL &&
+                        mime.equals("application/vnd.android.package-archive", ignoreCase = true)
+                    ) {
                         val contentUri = dm.getUriForDownloadedFile(id)
+                            ?: return@use
                         val installIntent = Intent(Intent.ACTION_VIEW).apply {
                             setDataAndType(contentUri, "application/vnd.android.package-archive")
                             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
                         }
                         context.startActivity(installIntent)
-                    } catch (e: Exception) {
-                        Toast.makeText(context, getString(R.string.download_open_failed), Toast.LENGTH_SHORT).show()
                     }
                 }
+            } catch (_: Exception) {
+                // A download-complete callback must never crash the browser process.
+                Toast.makeText(context, getString(R.string.download_open_failed), Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -314,6 +321,9 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         historyExecutor.shutdownNow()
+        synchronized(appDownloadIds) {
+            appDownloadIds.clear()
+        }
         super.onDestroy()
         tabs.forEach { it.webView.destroy() }
         inFlightAppNavigationUrls.clear()
@@ -913,6 +923,12 @@ class MainActivity : AppCompatActivity() {
         mimeType: String,
         referer: String?
     ) {
+        val parsedUri = runCatching { Uri.parse(url) }.getOrNull()
+        if (parsedUri?.scheme?.lowercase() !in setOf("http", "https")) {
+            Toast.makeText(this, getString(R.string.download_failed), Toast.LENGTH_SHORT).show()
+            return
+        }
+
         val needsLegacyStoragePermission = Build.VERSION.SDK_INT <= Build.VERSION_CODES.P &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) !=
             PackageManager.PERMISSION_GRANTED
@@ -938,12 +954,29 @@ class MainActivity : AppCompatActivity() {
         referer: String?
     ) {
         try {
+            val parsedUri = Uri.parse(url)
+            if (parsedUri.scheme?.lowercase() !in setOf("http", "https")) {
+                Toast.makeText(this, getString(R.string.download_failed), Toast.LENGTH_SHORT).show()
+                return
+            }
+
             val fileName = resolveDownloadFileName(url, contentDisposition, mimeType)
-            val request = DownloadManager.Request(Uri.parse(url)).apply {
-                CookieManager.getInstance().getCookie(url)?.let { addRequestHeader("cookie", it) }
-                addRequestHeader("User-Agent", userAgent)
-                referer?.let { addRequestHeader("Referer", it) }
-                setMimeType(mimeType)
+            val effectiveMimeType = mimeType.trim().ifBlank {
+                MimeTypeMap.getSingleton().getMimeTypeFromExtension(
+                    fileName.substringAfterLast('.', "").lowercase()
+                ) ?: "application/octet-stream"
+            }
+            val request = DownloadManager.Request(parsedUri).apply {
+                CookieManager.getInstance().getCookie(url)?.takeIf { it.isNotBlank() }?.let {
+                    addRequestHeader("cookie", it)
+                }
+                userAgent.takeIf { it.isNotBlank() }?.let {
+                    addRequestHeader("User-Agent", it)
+                }
+                referer?.takeIf { it.isNotBlank() }?.let {
+                    addRequestHeader("Referer", it)
+                }
+                setMimeType(effectiveMimeType)
                 setTitle(fileName)
                 setDescription(getString(R.string.downloading))
                 setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
@@ -951,10 +984,16 @@ class MainActivity : AppCompatActivity() {
                 setAllowedOverMetered(true)
                 setAllowedOverRoaming(true)
             }
-            val dm = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
-            dm.enqueue(request)
+            val dm = getSystemService(Context.DOWNLOAD_SERVICE) as? DownloadManager ?: run {
+                Toast.makeText(this, getString(R.string.download_failed), Toast.LENGTH_SHORT).show()
+                return
+            }
+            val downloadId = dm.enqueue(request)
+            synchronized(appDownloadIds) {
+                appDownloadIds.add(downloadId)
+            }
             Toast.makeText(this, getString(R.string.download_started, fileName), Toast.LENGTH_SHORT).show()
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             Toast.makeText(this, getString(R.string.download_failed), Toast.LENGTH_SHORT).show()
         }
     }
@@ -1141,31 +1180,35 @@ class MainActivity : AppCompatActivity() {
     )
 
     private fun queryAllDownloads(): List<DownloadEntry> {
-        val dm = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
-        val entries = mutableListOf<DownloadEntry>()
-        dm.query(DownloadManager.Query()).use { cursor ->
-            val idIdx = cursor.getColumnIndex(DownloadManager.COLUMN_ID)
-            val titleIdx = cursor.getColumnIndex(DownloadManager.COLUMN_TITLE)
-            val statusIdx = cursor.getColumnIndex(DownloadManager.COLUMN_STATUS)
-            val uriIdx = cursor.getColumnIndex(DownloadManager.COLUMN_LOCAL_URI)
-            val mimeIdx = cursor.getColumnIndex(DownloadManager.COLUMN_MEDIA_TYPE)
-            val bytesDownloadedIdx = cursor.getColumnIndex(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR)
-            val bytesTotalIdx = cursor.getColumnIndex(DownloadManager.COLUMN_TOTAL_SIZE_BYTES)
-            while (cursor.moveToNext()) {
-                entries.add(
-                    DownloadEntry(
-                        id = if (idIdx >= 0) cursor.getLong(idIdx) else -1L,
-                        title = if (titleIdx >= 0) cursor.getString(titleIdx) ?: "" else "",
-                        status = if (statusIdx >= 0) cursor.getInt(statusIdx) else -1,
-                        localUri = if (uriIdx >= 0) cursor.getString(uriIdx) else null,
-                        mimeType = if (mimeIdx >= 0) cursor.getString(mimeIdx) else null,
-                        bytesDownloaded = if (bytesDownloadedIdx >= 0) cursor.getLong(bytesDownloadedIdx) else 0L,
-                        bytesTotal = if (bytesTotalIdx >= 0) cursor.getLong(bytesTotalIdx) else 0L
+        return try {
+            val dm = getSystemService(Context.DOWNLOAD_SERVICE) as? DownloadManager ?: return emptyList()
+            val entries = mutableListOf<DownloadEntry>()
+            dm.query(DownloadManager.Query()).use { cursor ->
+                val idIdx = cursor.getColumnIndex(DownloadManager.COLUMN_ID)
+                val titleIdx = cursor.getColumnIndex(DownloadManager.COLUMN_TITLE)
+                val statusIdx = cursor.getColumnIndex(DownloadManager.COLUMN_STATUS)
+                val uriIdx = cursor.getColumnIndex(DownloadManager.COLUMN_LOCAL_URI)
+                val mimeIdx = cursor.getColumnIndex(DownloadManager.COLUMN_MEDIA_TYPE)
+                val bytesDownloadedIdx = cursor.getColumnIndex(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR)
+                val bytesTotalIdx = cursor.getColumnIndex(DownloadManager.COLUMN_TOTAL_SIZE_BYTES)
+                while (cursor.moveToNext()) {
+                    entries.add(
+                        DownloadEntry(
+                            id = if (idIdx >= 0) cursor.getLong(idIdx) else -1L,
+                            title = if (titleIdx >= 0) cursor.getString(titleIdx) ?: "" else "",
+                            status = if (statusIdx >= 0) cursor.getInt(statusIdx) else -1,
+                            localUri = if (uriIdx >= 0) cursor.getString(uriIdx) else null,
+                            mimeType = if (mimeIdx >= 0) cursor.getString(mimeIdx) else null,
+                            bytesDownloaded = if (bytesDownloadedIdx >= 0) cursor.getLong(bytesDownloadedIdx) else 0L,
+                            bytesTotal = if (bytesTotalIdx >= 0) cursor.getLong(bytesTotalIdx) else 0L
+                        )
                     )
-                )
+                }
             }
+            entries.sortedByDescending { it.id }
+        } catch (_: Exception) {
+            emptyList()
         }
-        return entries.sortedByDescending { it.id }
     }
 
     private fun downloadStatusText(entry: DownloadEntry): String {
