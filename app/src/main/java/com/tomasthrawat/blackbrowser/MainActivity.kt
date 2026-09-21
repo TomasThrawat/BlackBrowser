@@ -772,7 +772,7 @@ class MainActivity : AppCompatActivity() {
                     view.evaluateJavascript(script, null)
                 } catch (t: Throwable) {
                     AppFileLogger.logExceptionNow(
-                        this,
+                        this@MainActivity,
                         "WEBVIEW_CSS",
                         "cosmetic CSS injection failed",
                         t
