@@ -58,6 +58,7 @@ import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
 import androidx.webkit.ScriptHandler
 import androidx.browser.customtabs.CustomTabColorSchemeParams
+import androidx.browser.customtabs.CustomTabsClient
 import androidx.browser.customtabs.CustomTabsIntent
 import androidx.webkit.UserAgentMetadata
 import androidx.webkit.WebSettingsCompat
@@ -1597,20 +1598,61 @@ class MainActivity : AppCompatActivity() {
                 .setDefaultColorSchemeParams(colorParams)
                 .setShowTitle(true)
                 .build()
-            customTabs.launchUrl(this, Uri.parse(url))
-            AppFileLogger.log(this, "SEARCH", "opened Google Search in browser-backed Custom Tab")
-        } catch (e: ActivityNotFoundException) {
-            try {
-                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-                AppFileLogger.log(this, "SEARCH", "opened Google Search in external browser")
-            } catch (fallback: Exception) {
-                AppFileLogger.logExceptionNow(
+
+            // BlackBrowser is itself an HTTP(S) browser and can be the user's default
+            // browser. A plain ACTION_VIEW Custom Tab launch has no explicit destination,
+            // so the OS can resolve it back to BlackBrowser and re-enter MainActivity.
+            // Select the actual Custom Tabs provider explicitly to prevent that loop.
+            val providerPackage = runCatching {
+                CustomTabsClient.getPackageName(this, null)
+            }.getOrNull()?.takeUnless { it == packageName }
+
+            if (providerPackage != null) {
+                customTabs.intent.setPackage(providerPackage)
+                customTabs.launchUrl(this, Uri.parse(url))
+                AppFileLogger.log(
                     this,
                     "SEARCH",
-                    "failed to open Google Search in a browser",
-                    fallback
+                    "opened Google Search in Custom Tab provider=" + providerPackage
                 )
+                return
             }
+
+            // No Custom Tabs provider is available. Pick a different BROWSABLE https
+            // handler instead of allowing Android to resolve the URL back to this browser.
+            val externalBrowser = runCatching {
+                val viewIntent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                    .addCategory(Intent.CATEGORY_BROWSABLE)
+                packageManager.queryIntentActivities(
+                    viewIntent,
+                    PackageManager.MATCH_DEFAULT_ONLY
+                ).firstOrNull { it.activityInfo?.packageName != packageName }
+            }.getOrNull()
+
+            if (externalBrowser?.activityInfo?.packageName != null) {
+                customTabs.intent.setPackage(externalBrowser.activityInfo.packageName)
+                customTabs.launchUrl(this, Uri.parse(url))
+                AppFileLogger.log(
+                    this,
+                    "SEARCH",
+                    "opened Google Search in external browser=" +
+                        externalBrowser.activityInfo.packageName
+                )
+                return
+            }
+
+            AppFileLogger.log(
+                this,
+                "SEARCH",
+                "no external Custom Tabs/browser provider available"
+            )
+        } catch (e: ActivityNotFoundException) {
+            AppFileLogger.logExceptionNow(
+                this,
+                "SEARCH",
+                "no activity available for Google Search Custom Tab",
+                e
+            )
         } catch (e: Exception) {
             AppFileLogger.logExceptionNow(
                 this,
