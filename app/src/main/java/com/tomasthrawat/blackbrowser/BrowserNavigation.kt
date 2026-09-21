@@ -1,6 +1,7 @@
 package com.tomasthrawat.blackbrowser
 
-import android.net.Uri
+import java.net.URLEncoder
+import java.nio.charset.StandardCharsets
 
 object BrowserNavigation {
     private const val SEARCH_URL = "https://www.google.com/search?q="
@@ -17,7 +18,10 @@ object BrowserNavigation {
                 else -> "https://" + input
             }
         } else {
-            SEARCH_URL + Uri.encode(input)
+            SEARCH_URL + encodeQuery(input)
         }
     }
+
+    private fun encodeQuery(input: String): String =
+        URLEncoder.encode(input, StandardCharsets.UTF_8.name()).replace("+", "%20")
 }
