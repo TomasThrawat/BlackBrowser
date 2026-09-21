@@ -11,35 +11,15 @@ android {
         applicationId "com.tomstrawat.blackbrowser"
         minSdk 24
         targetSdk 34
-
-        def ciVersionCode = System.getenv("GITHUB_RUN_NUMBER")
-        def computedVersionCode = ciVersionCode?.isInteger() ? ciVersionCode.toInteger() : 5
-        versionCode computedVersionCode
+        versionCode 145
         versionName "1.4"
-    }
-
-    signingConfigs {
-        release {
-            def keystorePath = System.getenv("BLACKBROWSER_KEYSTORE_FILE")
-            if (keystorePath) {
-                storeFile file(keystorePath)
-                storePassword System.getenv("BLACKBROWSER_KEYSTORE_PASSWORD")
-                keyAlias System.getenv("BLACKBROWSER_KEY_ALIAS")
-                keyPassword System.getenv("BLACKBROWSER_KEY_PASSWORD")
-            }
-        }
     }
 
     buildTypes {
         release {
-            signingConfig signingConfigs.debug
             minifyEnabled true
             shrinkResources true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-
-            if (System.getenv("BLACKBROWSER_KEYSTORE_FILE")) {
-                signingConfig signingConfigs.release
-            }
         }
     }
 
