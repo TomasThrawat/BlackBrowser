@@ -57,6 +57,7 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
 import androidx.webkit.ScriptHandler
+import androidx.browser.customtabs.CustomTabsIntent
 import androidx.webkit.UserAgentMetadata
 import androidx.webkit.WebSettingsCompat
 import androidx.webkit.WebViewCompat
@@ -417,6 +418,18 @@ class MainActivity : AppCompatActivity() {
                 request: WebResourceRequest?
             ): Boolean {
                 val url = request?.url ?: return false
+
+                // Google Search is a public web service that can apply anti-abuse checks to
+                // embedded WebView traffic. Use AndroidX Custom Tabs for the search results,
+                // which renders the same URL in the user's browser-backed browsing context
+                // instead of spoofing a WebView User-Agent or bypassing Google's checks.
+                if (request.isForMainFrame &&
+                    request.method?.equals("POST", ignoreCase = true) != true &&
+                    isGoogleSearchUrl(url)
+                ) {
+                    openGoogleSearchInBrowser(url.toString())
+                    return true
+                }
 
                 // Google Search submits a dynamic URL with many transient parameters. Normalize
                 // main-frame search navigations before WebView starts the request so the browser
@@ -1566,6 +1579,44 @@ class MainActivity : AppCompatActivity() {
         return host == "google.com" || host.endsWith(".google.com")
     }
 
+    private fun isGoogleSearchUrl(uri: Uri): Boolean {
+        if (!uri.scheme.equals("https", ignoreCase = true)) return false
+        val host = uri.host?.lowercase() ?: return false
+        if (host != "www.google.com" && host != "google.com") return false
+        return uri.path?.equals("/search", ignoreCase = true) == true &&
+            !uri.getQueryParameter("q").isNullOrBlank()
+    }
+
+    private fun openGoogleSearchInBrowser(url: String) {
+        try {
+            val customTabs = CustomTabsIntent.Builder()
+                .setToolbarColor(Color.BLACK)
+                .setShowTitle(true)
+                .build()
+            customTabs.launchUrl(this, Uri.parse(url))
+            AppFileLogger.log(this, "SEARCH", "opened Google Search in browser-backed Custom Tab")
+        } catch (e: ActivityNotFoundException) {
+            try {
+                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                AppFileLogger.log(this, "SEARCH", "opened Google Search in external browser")
+            } catch (fallback: Exception) {
+                AppFileLogger.logExceptionNow(
+                    this,
+                    "SEARCH",
+                    "failed to open Google Search in a browser",
+                    fallback
+                )
+            }
+        } catch (e: Exception) {
+            AppFileLogger.logExceptionNow(
+                this,
+                "SEARCH",
+                "failed to open Google Search Custom Tab",
+                e
+            )
+        }
+    }
+
     private fun WebView.loadUrlHonest(url: String) {
         // The refresh button is the explicit way to reload the current document. Avoid issuing
         // another identical top-level request from address-bar/history/popup dispatch when that
@@ -1577,6 +1628,12 @@ class MainActivity : AppCompatActivity() {
         val parsedUrl = runCatching { Uri.parse(url) }.getOrNull()
         val host = parsedUrl?.host
         val isGoogleSettingsNavigation = parsedUrl?.let { isGoogleSettingsUrl(it) } == true
+
+        if (parsedUrl != null && isGoogleSearchUrl(parsedUrl)) {
+            openGoogleSearchInBrowser(url)
+            inFlightAppNavigationUrls.remove(this)
+            return
+        }
 
         if (isGoogleSettingsNavigation) {
             settings.userAgentString = computeUserAgent(host, forceSpoof = false)
