@@ -97,7 +97,7 @@ class AdBlockTest {
     @Test fun expectedBlockedCorsConsoleErrors_areSuppressedOnlyWhenTargetIsBlocked() {
         assertTrue(
             AdBlocker.isExpectedBlockedConsoleError(
-                "Access to XMLHttpRequest at 'https://ogads-pa.clients6.google.com/\$rpc/google.internal.onegoogle.asyncdata.v1.AsyncDataService/GetAsyncData' from origin 'https://www.google.com' has been blocked by CORS policy"
+                "Access to XMLHttpRequest at 'https://google-analytics.com/analytics.js' from origin 'https://www.google.com' has been blocked by CORS policy"
             )
         )
         assertTrue(
