@@ -44,7 +44,8 @@ jobs:
           test -x "$SDK_BUILD_TOOLS/aapt"
           "$SDK_BUILD_TOOLS/apksigner" verify --verbose --print-certs "$APK"
           "$SDK_BUILD_TOOLS/zipalign" -c -v 4 "$APK"
-          "$SDK_BUILD_TOOLS/aapt" dump badging "$APK" | grep -F "package: name='com.tomasthrawat.blackbrowser' versionCode='150'"
+          EXPECTED_VERSION_CODE="${GITHUB_RUN_NUMBER:-145}"
+          "$SDK_BUILD_TOOLS/aapt" dump badging "$APK" | grep -F "package: name='com.tomasthrawat.blackbrowser' versionCode='${EXPECTED_VERSION_CODE}'"
           ls -lh "$APK"
 
       - name: Upload APK
