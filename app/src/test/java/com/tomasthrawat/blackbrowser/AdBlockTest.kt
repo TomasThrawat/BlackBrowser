@@ -1,6 +1,8 @@
 package com.tomasthrawat.blackbrowser
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -82,6 +84,13 @@ class AdBlockTest {
         assertFalse(
             AdBlocker.isTrustedPopupDestinationParts("evil-example.com", "example.com")
         )
+    }
+
+    @Test fun blockingReason_identifiesMatchType_andNormalizesHost() {
+        assertEquals("HOST", AdBlocker.blockingReasonParts("DOUBLECLICK.NET.", "/", null))
+        assertEquals("PATH", AdBlocker.blockingReasonParts("example.com", "/ads/banner.js", null))
+        assertEquals("PATH_QUERY", AdBlocker.blockingReasonParts("example.com", "/collect", "x=1"))
+        assertNull(AdBlocker.blockingReasonParts("example.com", "/resource.js", null))
     }
 
     @Test fun cosmeticCss_containsNetworkIndependentAdSelectors() {

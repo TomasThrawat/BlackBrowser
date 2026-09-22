@@ -2,6 +2,7 @@ package com.tomasthrawat.blackbrowser
 
 import android.content.Context
 import android.net.Uri
+import java.io.IOException
 import java.util.Locale
 
 /**
@@ -8713,15 +8714,16 @@ object AdBlocker {
      * request threads see either the original curated set or the complete extended set, never a
      * partially populated collection.
      */
-    fun loadExtendedBlocklist(context: Context) {
-        if (extendedBlocklistLoaded) return
+    fun loadExtendedBlocklist(context: Context): Boolean {
+        if (extendedBlocklistLoaded) return true
 
         synchronized(extendedLoadLock) {
-            if (extendedBlocklistLoaded) return
+            if (extendedBlocklistLoaded) return true
 
             val merged = HashSet<String>(400_000)
             merged.addAll(blockedHosts)
             merged.addAll(extraBlockedHosts)
+            var allChunksLoaded = true
 
             for (i in 1..MEGA_BLOCKLIST_ASSET_COUNT) {
                 val name = "$MEGA_BLOCKLIST_ASSET_PREFIX$i.txt"
@@ -8734,14 +8736,17 @@ object AdBlocker {
                             }
                         }
                     }
-                } catch (_: Exception) {
-                    // Keep already loaded entries. A later app process can retry if an asset
-                    // chunk is unavailable.
+                } catch (_: IOException) {
+                    // Do not publish a partial blocklist. A later app process can retry.
+                    allChunksLoaded = false
                 }
             }
 
+            if (!allChunksLoaded) return false
+
             allBlockedHosts = merged
             extendedBlocklistLoaded = true
+            return true
         }
     }
 
@@ -8840,20 +8845,36 @@ object AdBlocker {
         }
     }
 
-    internal fun shouldBlockParts(host: String?, path: String?, query: String?): Boolean {
-        val normalizedHost = host?.lowercase(Locale.ROOT) ?: return false
-        if (hostOrParentMatches(normalizedHost, allBlockedHosts)) return true
-        if (blockedHostSubstrings.any { matchesBlockedHostSubstring(normalizedHost, it) }) return true
+    internal fun blockingReasonParts(host: String?, path: String?, query: String?): String? {
+        val normalizedHost = host
+            ?.lowercase(Locale.ROOT)
+            ?.removeSuffix(".")
+            ?: return null
+        if (hostOrParentMatches(normalizedHost, allBlockedHosts)) return "HOST"
+        if (blockedHostSubstrings.any { matchesBlockedHostSubstring(normalizedHost, it) }) {
+            return "HOST_SUBSTRING"
+        }
 
-        val normalizedPath = path?.lowercase(Locale.ROOT) ?: return false
-        if (blockedPathPatterns.any { normalizedPath.contains(it) }) return true
+        val normalizedPath = path?.lowercase(Locale.ROOT) ?: return null
+        if (blockedPathPatterns.any { normalizedPath.contains(it) }) return "PATH"
 
-        return !query.isNullOrEmpty() &&
+        return if (!query.isNullOrEmpty() &&
             queryDependentBlockedPaths.any { normalizedPath.endsWith(it) }
+        ) {
+            "PATH_QUERY"
+        } else {
+            null
+        }
     }
 
+    internal fun shouldBlockParts(host: String?, path: String?, query: String?): Boolean =
+        blockingReasonParts(host, path, query) != null
+
+    fun blockingReason(uri: Uri): String? =
+        blockingReasonParts(uri.host, uri.encodedPath, uri.encodedQuery)
+
     fun shouldBlock(uri: Uri): Boolean =
-        shouldBlockParts(uri.host, uri.encodedPath, uri.encodedQuery)
+        blockingReason(uri) != null
 
     // Popup destinations (window.open results) are only auto-forwarded into the visible tab
     // when they land on one of these well-known identity-provider hosts -- the "sign in with
@@ -8918,10 +8939,10 @@ object AdBlocker {
         destinationHost: String?,
         openerHost: String?
     ): Boolean {
-        val destHost = destinationHost?.lowercase(Locale.ROOT) ?: return false
+        val destHost = destinationHost?.lowercase(Locale.ROOT)?.removeSuffix(".") ?: return false
         if (trustedPopupHosts.any { destHost == it || destHost.endsWith(".$it") }) return true
 
-        val normalizedOpenerHost = openerHost?.lowercase(Locale.ROOT)
+        val normalizedOpenerHost = openerHost?.lowercase(Locale.ROOT)?.removeSuffix(".")
         if (normalizedOpenerHost.isNullOrEmpty()) return false
         return destHost == normalizedOpenerHost ||
             registrableDomain(destHost) == registrableDomain(normalizedOpenerHost)

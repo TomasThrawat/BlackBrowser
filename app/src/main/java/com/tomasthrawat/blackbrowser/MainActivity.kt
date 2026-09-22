@@ -273,7 +273,14 @@ class MainActivity : AppCompatActivity() {
         // Loads the bundled extended blocklist (HaGeZi/1Hosts/oisd/StevenBlack merge, ~321k
         // domains) from assets. Done on a background thread since it parses a few MB of text;
         // shouldBlock() keeps working off the smaller starting set until this finishes.
-        Thread { AdBlocker.loadExtendedBlocklist(applicationContext) }.start()
+        Thread {
+            val complete = AdBlocker.loadExtendedBlocklist(applicationContext)
+            AppFileLogger.trace(
+                this@MainActivity,
+                "ADBLOCK",
+                "extendedBlocklistComplete=" + complete
+            )
+        }.start()
 
         webViewContainer = findViewById(R.id.webViewContainer)
         editUrl = findViewById(R.id.editUrl)
@@ -848,16 +855,16 @@ class MainActivity : AppCompatActivity() {
                 request: WebResourceRequest?
             ): WebResourceResponse? {
                 val url = request?.url
-                // Keep the network exceptions narrow enough that ordinary Google/ad/tracker
-                // traffic is still eligible for blocking.
-                val isTrustedHost = url != null && AdBlocker.isTrustedPopupDestination(url, null)
+                // Popup trust is intentionally not reused for network resources. A host that is
+                // trusted as a sign-in/window.open destination must not automatically bypass the
+                // network blocklist for all of its images/scripts/XHRs.
                 val adBlockOn = AdBlockPrefs.isEnabled(this@MainActivity)
+                val blockReason = url?.let { AdBlocker.blockingReason(it) }
                 val isCloudflareChallenge = url != null && AdBlocker.isCloudflareChallenge(url)
                 val isGoogleCaptcha = url != null && isGoogleCaptchaResource(url)
                 val willBlock = url != null &&
                     adBlockOn &&
-                    AdBlocker.shouldBlock(url) &&
-                    !isTrustedHost &&
+                    blockReason != null &&
                     !isCloudflareChallenge &&
                     !isGoogleCaptcha
 
@@ -868,7 +875,8 @@ class MainActivity : AppCompatActivity() {
                     AppFileLogger.trace(
                         this@MainActivity,
                         "RESOURCE_BLOCKED",
-                        "mainFrame=" + request?.isForMainFrame +
+                        "reason=" + AppFileLogger.safeString(blockReason) +
+                            " mainFrame=" + request?.isForMainFrame +
                             " method=" + AppFileLogger.safeString(request?.method) +
                             " url=" + AppFileLogger.safeUrl(url?.toString())
                     )
