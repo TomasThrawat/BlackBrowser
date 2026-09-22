@@ -8814,17 +8814,20 @@ object AdBlocker {
     // Only actual Cloudflare challenge infrastructure gets this exemption. The previous
     // implementation exempted every *.cloudflare.com host and every /cdn-cgi/* path, which was
     // much broader than a challenge exception.
-    fun isCloudflareChallenge(uri: Uri): Boolean {
-        val host = uri.host?.lowercase(Locale.ROOT) ?: return false
-        if (host == "challenges.cloudflare.com" ||
-            host.endsWith(".challenges.cloudflare.com")
+    internal fun isCloudflareChallengeParts(host: String?, path: String?): Boolean {
+        val normalizedHost = host?.lowercase(Locale.ROOT) ?: return false
+        if (normalizedHost == "challenges.cloudflare.com" ||
+            normalizedHost.endsWith(".challenges.cloudflare.com")
         ) {
             return true
         }
 
-        val path = uri.encodedPath?.lowercase(Locale.ROOT) ?: return false
-        return path.startsWith("/cdn-cgi/challenge-platform/")
+        val normalizedPath = path?.lowercase(Locale.ROOT) ?: return false
+        return normalizedPath.startsWith("/cdn-cgi/challenge-platform/")
     }
+
+    fun isCloudflareChallenge(uri: Uri): Boolean =
+        isCloudflareChallengeParts(uri.host, uri.encodedPath)
 
     private fun matchesBlockedHostSubstring(host: String, token: String): Boolean {
         val normalizedToken = token.lowercase(Locale.ROOT)
@@ -8837,17 +8840,20 @@ object AdBlocker {
         }
     }
 
-    fun shouldBlock(uri: Uri): Boolean {
-        val host = uri.host?.lowercase(Locale.ROOT) ?: return false
-        if (hostOrParentMatches(host, allBlockedHosts)) return true
-        if (blockedHostSubstrings.any { matchesBlockedHostSubstring(host, it) }) return true
+    internal fun shouldBlockParts(host: String?, path: String?, query: String?): Boolean {
+        val normalizedHost = host?.lowercase(Locale.ROOT) ?: return false
+        if (hostOrParentMatches(normalizedHost, allBlockedHosts)) return true
+        if (blockedHostSubstrings.any { matchesBlockedHostSubstring(normalizedHost, it) }) return true
 
-        val path = uri.encodedPath?.lowercase(Locale.ROOT) ?: return false
-        if (blockedPathPatterns.any { path.contains(it) }) return true
+        val normalizedPath = path?.lowercase(Locale.ROOT) ?: return false
+        if (blockedPathPatterns.any { normalizedPath.contains(it) }) return true
 
-        val query = uri.encodedQuery
-        return !query.isNullOrEmpty() && queryDependentBlockedPaths.any { path.endsWith(it) }
+        return !query.isNullOrEmpty() &&
+            queryDependentBlockedPaths.any { normalizedPath.endsWith(it) }
     }
+
+    fun shouldBlock(uri: Uri): Boolean =
+        shouldBlockParts(uri.host, uri.encodedPath, uri.encodedQuery)
 
     // Popup destinations (window.open results) are only auto-forwarded into the visible tab
     // when they land on one of these well-known identity-provider hosts -- the "sign in with
@@ -8908,13 +8914,24 @@ object AdBlocker {
     // True when [destination] is either a known identity-provider host above, or shares a
     // registrable domain with [openerUrl] (the page that called window.open). Anything else
     // gates onCreateWindow forwarding closed.
-    fun isTrustedPopupDestination(destination: Uri, openerUrl: String?): Boolean {
-        val destHost = destination.host?.lowercase() ?: return false
+    internal fun isTrustedPopupDestinationParts(
+        destinationHost: String?,
+        openerHost: String?
+    ): Boolean {
+        val destHost = destinationHost?.lowercase(Locale.ROOT) ?: return false
         if (trustedPopupHosts.any { destHost == it || destHost.endsWith(".$it") }) return true
 
-        val openerHost = openerUrl?.let { Uri.parse(it).host?.lowercase() }
-        if (openerHost.isNullOrEmpty()) return false
-        return destHost == openerHost || registrableDomain(destHost) == registrableDomain(openerHost)
+        val normalizedOpenerHost = openerHost?.lowercase(Locale.ROOT)
+        if (normalizedOpenerHost.isNullOrEmpty()) return false
+        return destHost == normalizedOpenerHost ||
+            registrableDomain(destHost) == registrableDomain(normalizedOpenerHost)
+    }
+
+    fun isTrustedPopupDestination(destination: Uri, openerUrl: String?): Boolean {
+        val openerHost = openerUrl?.let {
+            runCatching { Uri.parse(it).host }.getOrNull()
+        }
+        return isTrustedPopupDestinationParts(destination.host, openerHost)
     }
 
     // Cosmetic filtering: hides leftover ad containers/iframes served from the page's own
