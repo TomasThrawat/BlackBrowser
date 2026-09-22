@@ -909,14 +909,17 @@ class MainActivity : AppCompatActivity() {
             }
 
             override fun onConsoleMessage(consoleMessage: android.webkit.ConsoleMessage?): Boolean {
-                AppFileLogger.trace(
-                    this@MainActivity,
-                    "CONSOLE",
-                    "level=" + consoleMessage?.messageLevel() +
-                        " source=" + AppFileLogger.safeString(consoleMessage?.sourceId()) +
-                        " line=" + consoleMessage?.lineNumber() +
-                        " message=" + AppFileLogger.safeString(consoleMessage?.message())
-                )
+                val message = consoleMessage?.message().orEmpty()
+                if (!AdBlocker.isExpectedBlockedConsoleError(message)) {
+                    AppFileLogger.trace(
+                        this@MainActivity,
+                        "CONSOLE",
+                        "level=" + consoleMessage?.messageLevel() +
+                            " source=" + AppFileLogger.safeString(consoleMessage?.sourceId()) +
+                            " line=" + consoleMessage?.lineNumber() +
+                            " message=" + AppFileLogger.safeString(message)
+                    )
+                }
                 return super.onConsoleMessage(consoleMessage)
             }
 

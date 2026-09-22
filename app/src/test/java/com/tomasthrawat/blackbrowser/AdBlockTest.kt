@@ -93,6 +93,26 @@ class AdBlockTest {
         assertNull(AdBlocker.blockingReasonParts("example.com", "/resource.js", null))
     }
 
+
+    @Test fun expectedBlockedCorsConsoleErrors_areSuppressedOnlyWhenTargetIsBlocked() {
+        assertTrue(
+            AdBlocker.isExpectedBlockedConsoleError(
+                "Access to XMLHttpRequest at 'https://ogads-pa.clients6.google.com/\$rpc/google.internal.onegoogle.asyncdata.v1.AsyncDataService/GetAsyncData' from origin 'https://www.google.com' has been blocked by CORS policy"
+            )
+        )
+        assertTrue(
+            AdBlocker.isExpectedBlockedConsoleError(
+                "Access to XMLHttpRequest at 'https://www.google-analytics.com/analytics.js' from origin 'https://support.google.com' has been blocked by CORS policy"
+            )
+        )
+        assertFalse(
+            AdBlocker.isExpectedBlockedConsoleError(
+                "Access to XMLHttpRequest at 'https://example.com/api' from origin 'https://example.org' has been blocked by CORS policy"
+            )
+        )
+        assertFalse(AdBlocker.isExpectedBlockedConsoleError("Uncaught (in promise) Error: V"))
+    }
+
     @Test fun cosmeticCss_containsNetworkIndependentAdSelectors() {
         val css = AdBlocker.cosmeticHideCss()
         assertTrue(css.contains("adsbygoogle"))
