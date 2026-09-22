@@ -859,7 +859,7 @@ class MainActivity : AppCompatActivity() {
                 // trusted as a sign-in/window.open destination must not automatically bypass the
                 // network blocklist for all of its images/scripts/XHRs.
                 val adBlockOn = AdBlockPrefs.isEnabled(this@MainActivity)
-                val blockReason = url?.let { AdBlocker.blockingReason(it) }
+                val blockReason = if (adBlockOn) url?.let { AdBlocker.blockingReason(it) } else null
                 val isCloudflareChallenge = url != null && AdBlocker.isCloudflareChallenge(url)
                 val isGoogleCaptcha = url != null && isGoogleCaptchaResource(url)
                 val willBlock = url != null &&
