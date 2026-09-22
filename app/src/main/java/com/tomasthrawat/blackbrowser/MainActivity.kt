@@ -126,8 +126,8 @@ class MainActivity : AppCompatActivity() {
 
     // Uploads triggered by a website's <input type="file"> element go through these.
     private var fileChooserCallback: ValueCallback<Array<Uri>>? = null
-    private var pendingFileChooserParams: FileChooserParams? = null
     private var cameraImageUri: Uri? = null
+    private var cameraCaptureFile: File? = null
 
     private val fileChooserLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -419,11 +419,21 @@ class MainActivity : AppCompatActivity() {
         synchronized(appDownloadIds) {
             appDownloadIds.clear()
         }
+        pendingDownload = null
         pendingBlobDownload = null
+        fileChooserCallback?.onReceiveValue(null)
+        fileChooserCallback = null
+        cameraCaptureFile?.delete()
+        cameraCaptureFile = null
+        cameraImageUri = null
         pageFinishGate.clear()
-        super.onDestroy()
-        tabs.forEach { it.webView.destroy() }
+        tabs.forEach {
+            runCatching { it.webView.stopLoading() }
+            runCatching { it.webView.destroy() }
+        }
+        tabs.clear()
         inFlightAppNavigationUrls.clear()
+        super.onDestroy()
     }
 
     // ---- Tabs ----
@@ -815,7 +825,7 @@ class MainActivity : AppCompatActivity() {
                     // mutable and could change before the thread runs.
                     val historyTitle = tab.title
                     val historyUrl = tab.url
-                    historyExecutor.execute { HistoryStore.add(applicationContext, historyTitle, historyUrl) }
+                    runCatching { historyExecutor.execute { HistoryStore.add(applicationContext, historyTitle, historyUrl) } }
                 }
 
                 if (AdBlockPrefs.isEnabled(this@MainActivity)) {
@@ -1072,17 +1082,7 @@ class MainActivity : AppCompatActivity() {
             ): Boolean {
                 fileChooserCallback?.onReceiveValue(null)
                 fileChooserCallback = filePathCallback
-
-                if (!hasMediaPermission()) {
-                    pendingFileChooserParams = fileChooserParams
-                    ActivityCompat.requestPermissions(
-                        this@MainActivity,
-                        mediaPermissions(),
-                        REQUEST_MEDIA_PERMISSION
-                    )
-                } else {
-                    launchFileChooser(fileChooserParams)
-                }
+                launchFileChooser(fileChooserParams)
                 return true
             }
         }
@@ -1841,32 +1841,10 @@ class MainActivity : AppCompatActivity() {
                     Toast.LENGTH_SHORT
                 ).show()
             }
-        } else if (requestCode == REQUEST_MEDIA_PERMISSION) {
-            // Whatever the user picks here, the system file/photo picker launched below
-            // still works -- it runs out-of-process and hands back a Uri the app is
-            // granted regardless of this permission. Denying it only means the app
-            // itself has no standing access to the media store beyond that Uri.
-            val params = pendingFileChooserParams
-            pendingFileChooserParams = null
-            launchFileChooser(params)
         }
     }
 
     // ---- File chooser (uploads) ----
-
-    private fun mediaPermissions(): Array<String> {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            arrayOf(Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO)
-        } else {
-            arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
-        }
-    }
-
-    private fun hasMediaPermission(): Boolean {
-        return mediaPermissions().all {
-            ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED
-        }
-    }
 
     private fun launchFileChooser(params: FileChooserParams?) {
         val contentIntent = params?.createIntent() ?: Intent(Intent.ACTION_GET_CONTENT).apply {
@@ -1899,12 +1877,17 @@ class MainActivity : AppCompatActivity() {
         return try {
             val fileName = "capture_${SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())}.jpg"
             val photoFile = File(cacheDir, fileName)
+            if (!photoFile.createNewFile()) throw IllegalStateException("could not create temporary camera file")
             val photoUri = FileProvider.getUriForFile(this, "$packageName.fileprovider", photoFile)
+            cameraCaptureFile = photoFile
             cameraImageUri = photoUri
             captureIntent.putExtra(MediaStore.EXTRA_OUTPUT, photoUri)
             captureIntent.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
             captureIntent
         } catch (e: Exception) {
+            cameraCaptureFile?.delete()
+            cameraCaptureFile = null
+            cameraImageUri = null
             null
         }
     }
@@ -1917,6 +1900,8 @@ class MainActivity : AppCompatActivity() {
         if (resultCode != RESULT_OK) {
             callback.onReceiveValue(null)
             cameraImageUri = null
+            cameraCaptureFile?.delete()
+            cameraCaptureFile = null
             return
         }
 
@@ -1935,6 +1920,8 @@ class MainActivity : AppCompatActivity() {
             }
         }
         cameraImageUri = null
+        cameraCaptureFile?.delete()
+        cameraCaptureFile = null
         callback.onReceiveValue(if (results.isEmpty()) null else results.toTypedArray())
     }
 
@@ -2661,7 +2648,6 @@ class MainActivity : AppCompatActivity() {
     companion object {
         private const val REQUEST_STORAGE_PERMISSION = 1001
         private const val REQUEST_BLOB_STORAGE_PERMISSION = 1002
-        private const val REQUEST_MEDIA_PERMISSION = 1004
         private const val MAX_BLOB_DOWNLOAD_BYTES = 50 * 1024 * 1024
         private const val MAX_BLOB_BASE64_CHARS =
             ((MAX_BLOB_DOWNLOAD_BYTES + 2) / 3) * 4 + 128
