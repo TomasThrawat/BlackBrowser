@@ -806,9 +806,7 @@ class MainActivity : AppCompatActivity() {
                     historyExecutor.execute { HistoryStore.add(applicationContext, historyTitle, historyUrl) }
                 }
 
-                if (AdBlockPrefs.isEnabled(this@MainActivity) &&
-                    !isGooglePage(runCatching { Uri.parse(view?.url) }.getOrNull())
-                ) {
+                if (AdBlockPrefs.isEnabled(this@MainActivity)) {
                     injectCosmeticCss(view)
                 }
             }
@@ -850,47 +848,35 @@ class MainActivity : AppCompatActivity() {
                 request: WebResourceRequest?
             ): WebResourceResponse? {
                 val url = request?.url
-                // Widened past the original main-frame-only exemption: a same-tab 2FA
-                // "waiting for your confirmation" flow (e.g. Google's own-device approval
-                // step) polls its own host in the background via XHR/fetch -- those are
-                // sub-resource requests (isForMainFrame == false), so the earlier
-                // main-frame-only exemption still let shouldBlock() zero out the poll
-                // response, which looked like the page being stuck "still verifying"
-                // forever even though the top-level page itself loaded fine.
-                // trustedPopupHosts is a small curated allowlist of identity providers
-                // that don't serve third-party ads on their own domain, so exempting all
-                // traffic to them (not just the top-level navigation) is safe.
+                // Keep the network exceptions narrow enough that ordinary Google/ad/tracker
+                // traffic is still eligible for blocking.
                 val isTrustedHost = url != null && AdBlocker.isTrustedPopupDestination(url, null)
                 val adBlockOn = AdBlockPrefs.isEnabled(this@MainActivity)
                 val isCloudflareChallenge = url != null && AdBlocker.isCloudflareChallenge(url)
-                // Google owns many of the scripts/styles/images used by its search UI, and some
-        // of those resource hosts also appear in broad community blocklists. Blocking a
-        // required Google subresource can leave the WebView with a successfully finished
-        // document that paints only its black background. Never filter Google-owned traffic
-        // here; Google Search already has its own server-side abuse controls.
-        val isGooglePage = url != null && isGooglePage(url)
-        val isGoogleCaptcha = url != null && isGoogleCaptchaResource(url)
-        val willBlock = url != null &&
-            adBlockOn &&
-            AdBlocker.shouldBlock(url) &&
-            !isTrustedHost &&
-            !isCloudflareChallenge &&
-            !isGooglePage &&
-            !isGoogleCaptcha
-                AppFileLogger.trace(
-                    this@MainActivity,
-                    "RESOURCE",
-                    "mainFrame=" + request?.isForMainFrame +
-                        " method=" + AppFileLogger.safeString(request?.method) +
-                        " blocked=" + willBlock +
-                        " googlePage=" + isGooglePage +
-                        " googleCaptcha=" + isGoogleCaptcha +
-                        " trusted=" + isTrustedHost +
-                        " cloudflareChallenge=" + isCloudflareChallenge +
-                        " url=" + AppFileLogger.safeUrl(url?.toString())
-                )
+                val isGoogleCaptcha = url != null && isGoogleCaptchaResource(url)
+                val willBlock = url != null &&
+                    adBlockOn &&
+                    AdBlocker.shouldBlock(url) &&
+                    !isTrustedHost &&
+                    !isCloudflareChallenge &&
+                    !isGoogleCaptcha
+
+                // shouldInterceptRequest is on the WebView networking hot path. Logging every
+                // image/script/XHR/font request creates substantial file I/O on busy pages.
+                // Keep diagnostics only for actual blocked requests.
                 if (willBlock) {
-                    return WebResourceResponse("text/plain", "UTF-8", ByteArrayInputStream(ByteArray(0)))
+                    AppFileLogger.trace(
+                        this@MainActivity,
+                        "RESOURCE_BLOCKED",
+                        "mainFrame=" + request?.isForMainFrame +
+                            " method=" + AppFileLogger.safeString(request?.method) +
+                            " url=" + AppFileLogger.safeUrl(url?.toString())
+                    )
+                    return WebResourceResponse(
+                        "text/plain",
+                        "UTF-8",
+                        ByteArrayInputStream(ByteArray(0))
+                    )
                 }
                 return super.shouldInterceptRequest(view, request)
             }
@@ -2219,12 +2205,6 @@ class MainActivity : AppCompatActivity() {
             path == "/safesearch" ||
             path == "/safesearch/"
     }
-
-    private fun isGooglePage(uri: Uri?): Boolean {
-        val host = uri?.host?.lowercase() ?: return false
-        return host == "google.com" || host.endsWith(".google.com")
-    }
-
 
     private fun WebView.loadUrlHonest(url: String) {
         // The refresh button is the explicit way to reload the current document. Avoid issuing
