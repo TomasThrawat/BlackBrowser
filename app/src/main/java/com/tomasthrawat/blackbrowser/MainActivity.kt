@@ -423,6 +423,7 @@ class MainActivity : AppCompatActivity() {
         super.onDestroy()
         tabs.forEach { it.webView.destroy() }
         inFlightAppNavigationUrls.clear()
+        pageFinishGate.clear()
     }
 
     // ---- Tabs ----
@@ -774,6 +775,7 @@ class MainActivity : AppCompatActivity() {
                         " cache=" + view?.settings?.cacheMode
                 )
                 super.onPageStarted(view, url, favicon)
+                if (view != null && url != null) pageFinishGate.onPageStarted(view, url)
                 // Once Chromium has actually started the main-frame navigation, the original
                 // app dispatch has happened. Release the guard so a later deliberate navigation
                 // is not blocked, including redirect chains that never finish on the original URL.
@@ -783,6 +785,7 @@ class MainActivity : AppCompatActivity() {
             }
 
             override fun onPageFinished(view: WebView?, url: String?) {
+                if (view != null && !pageFinishGate.shouldProcessPageFinished(view, url)) return
                 AppFileLogger.log(this@MainActivity, "WEBVIEW", "pageFinished url=" + AppFileLogger.safeUrl(url))
                 AppFileLogger.trace(
                     this@MainActivity,
@@ -2202,6 +2205,9 @@ class MainActivity : AppCompatActivity() {
     // while the first navigation is still in flight. This does not block redirects,
     // subresources, or a deliberate new navigation after the current one finishes.
     private val inFlightAppNavigationUrls = java.util.WeakHashMap<WebView, String>()
+    // WebView may deliver duplicate onPageFinished callbacks for one main-frame load.
+    // Gate downstream work so history/CSS/logging run once per navigation.
+    private val pageFinishGate = PageFinishGate<WebView>()
 
     private fun isGoogleSettingsUrl(uri: Uri): Boolean {
         val host = uri.host?.lowercase() ?: return false
