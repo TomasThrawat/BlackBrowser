@@ -2,6 +2,7 @@ package com.tomasthrawat.blackbrowser
 
 import android.content.Context
 import android.net.Uri
+import java.util.Locale
 
 /**
  * Persists whether the ad blocker is active. Defaults to ON.
@@ -8695,44 +8696,52 @@ object AdBlocker {
     @Volatile
     private var allBlockedHosts: Set<String> = blockedHosts + extraBlockedHosts
 
-    // Extended blocklist merged from 4 external community sources -- HaGeZi Pro mini,
-    // 1Hosts (Lite), oisd big, and StevenBlack (with the gambling extension) -- deduplicated
-    // and compacted (subdomains already covered by a parent domain elsewhere in the merged
-    // set are dropped) down to ~321k unique domains. Bundled as plain-text files under
-    // app/src/main/assets/ (split into chunks so no single asset gets unwieldy) and loaded
-    // into memory at startup below. Same guarantee as the rest of this file: nothing is ever
-    // fetched from the network -- the chunks are packaged inside the APK at build time.
-    @Volatile
-    private var megaBlockedHosts: Set<String> = emptySet()
-
+    // Extended blocklist is published atomically after the complete build. Keeping only one
+    // final HashSet avoids the second ~321k-entry hash table the old implementation created
+    // when it merged the large set into another set.
     private const val MEGA_BLOCKLIST_ASSET_PREFIX = "blocklist_part"
     private const val MEGA_BLOCKLIST_ASSET_COUNT = 6
+    private val extendedLoadLock = Any()
+
+    @Volatile
+    private var extendedBlocklistLoaded = false
 
     /**
-     * Loads the bundled extended blocklist (see [megaBlockedHosts]) from assets into memory
-     * and merges it into [allBlockedHosts]. Reads a few MB off disk and builds a HashSet of
-     * ~300k+ entries, so call this from a background thread (e.g. right after onCreate()),
-     * never on the main thread. Safe to call more than once; safe regardless of whether
-     * shouldBlock() has already run with the smaller starting set in the meantime.
+     * Loads the bundled extended blocklist once, off the main thread.
+     *
+     * The set is assembled privately and then published through one volatile assignment, so
+     * request threads see either the original curated set or the complete extended set, never a
+     * partially populated collection.
      */
     fun loadExtendedBlocklist(context: Context) {
-        val merged = HashSet<String>(400_000)
-        for (i in 1..MEGA_BLOCKLIST_ASSET_COUNT) {
-            val name = "$MEGA_BLOCKLIST_ASSET_PREFIX$i.txt"
-            try {
-                context.assets.open(name).bufferedReader().useLines { lines ->
-                    lines.forEach { line ->
-                        val d = line.trim()
-                        if (d.isNotEmpty()) merged.add(d)
+        if (extendedBlocklistLoaded) return
+
+        synchronized(extendedLoadLock) {
+            if (extendedBlocklistLoaded) return
+
+            val merged = HashSet<String>(400_000)
+            merged.addAll(blockedHosts)
+            merged.addAll(extraBlockedHosts)
+
+            for (i in 1..MEGA_BLOCKLIST_ASSET_COUNT) {
+                val name = "$MEGA_BLOCKLIST_ASSET_PREFIX$i.txt"
+                try {
+                    context.assets.open(name).bufferedReader().useLines { lines ->
+                        lines.forEach { line ->
+                            val d = line.trim().lowercase(Locale.ROOT).removeSuffix(".")
+                            if (d.isNotEmpty() && !d.startsWith("#")) {
+                                merged.add(d)
+                            }
+                        }
                     }
+                } catch (_: Exception) {
+                    // Keep already loaded entries. A later app process can retry if an asset
+                    // chunk is unavailable.
                 }
-            } catch (e: Exception) {
-                // Missing/corrupt chunk: skip it, keep whatever else loaded successfully.
             }
-        }
-        if (merged.isNotEmpty()) {
-            megaBlockedHosts = merged
-            allBlockedHosts = allBlockedHosts + megaBlockedHosts
+
+            allBlockedHosts = merged
+            extendedBlocklistLoaded = true
         }
     }
 
@@ -8747,8 +8756,9 @@ object AdBlocker {
         }
     }
 
-    // Path/query fragments, checked with slash boundaries so normal words are never matched.
-    private val blockedPatterns: List<String> = listOf(
+    // Path fragments are checked against the path only. Query-dependent rules are handled
+    // separately so the scheme/host/query text cannot create accidental substring matches.
+    private val blockedPathPatterns: List<String> = listOf(
         "/ads/",
         "/ad/",
         "/adserver/",
@@ -8767,14 +8777,12 @@ object AdBlocker {
         "/adsync",
         "/prebid",
         "/vast.xml",
-        "/vast?",
         "/openrtb",
         "/adchoices",
         "/sponsored-ads/",
         "/native_ads/",
         "/aff_click",
         "/affiliate/click",
-        "/click.php?",
         "/adserv/",
         "/adserver.php",
         "/ad_frame",
@@ -8782,10 +8790,8 @@ object AdBlocker {
         "/gpt.js",
         "/pubads",
         "/fbevents.js",
-        "/collect?",
         "/beacon.js",
         "/track.php",
-        "/redirect.php?",
         "/interstitial",
         "/adx.php",
         "/rtb/",
@@ -8798,24 +8804,49 @@ object AdBlocker {
         "/ad-popup"
     )
 
-    // Cloudflare challenge infrastructure must never be swallowed by the ad blocker.
-    // A protected site can load its challenge from challenges.cloudflare.com, while newer
-    // challenge flows can also use /cdn-cgi/ endpoints on the protected origin itself.
-    // Blocking either leaves the challenge UI visible but prevents its verification request
-    // from completing, which presents exactly as a perpetual refresh/verification loop.
+    private val queryDependentBlockedPaths: Set<String> = setOf(
+        "/vast",
+        "/click.php",
+        "/collect",
+        "/redirect.php"
+    )
+
+    // Only actual Cloudflare challenge infrastructure gets this exemption. The previous
+    // implementation exempted every *.cloudflare.com host and every /cdn-cgi/* path, which was
+    // much broader than a challenge exception.
     fun isCloudflareChallenge(uri: Uri): Boolean {
-        val host = uri.host?.lowercase() ?: return false
-        if (host == "cloudflare.com" || host.endsWith(".cloudflare.com")) return true
-        return uri.path?.startsWith("/cdn-cgi/", ignoreCase = true) == true
+        val host = uri.host?.lowercase(Locale.ROOT) ?: return false
+        if (host == "challenges.cloudflare.com" ||
+            host.endsWith(".challenges.cloudflare.com")
+        ) {
+            return true
+        }
+
+        val path = uri.encodedPath?.lowercase(Locale.ROOT) ?: return false
+        return path.startsWith("/cdn-cgi/challenge-platform/")
+    }
+
+    private fun matchesBlockedHostSubstring(host: String, token: String): Boolean {
+        val normalizedToken = token.lowercase(Locale.ROOT)
+        if (normalizedToken.contains('.')) {
+            return host == normalizedToken || host.endsWith(".$normalizedToken")
+        }
+
+        return host.split('.').any { label ->
+            label == normalizedToken || label.startsWith("$normalizedToken-")
+        }
     }
 
     fun shouldBlock(uri: Uri): Boolean {
-        val host = uri.host?.lowercase() ?: return false
+        val host = uri.host?.lowercase(Locale.ROOT) ?: return false
         if (hostOrParentMatches(host, allBlockedHosts)) return true
-        if (blockedHostSubstrings.any { host.contains(it) }) return true
+        if (blockedHostSubstrings.any { matchesBlockedHostSubstring(host, it) }) return true
 
-        val fullUrl = uri.toString().lowercase()
-        return blockedPatterns.any { fullUrl.contains(it) }
+        val path = uri.encodedPath?.lowercase(Locale.ROOT) ?: return false
+        if (blockedPathPatterns.any { path.contains(it) }) return true
+
+        val query = uri.encodedQuery
+        return !query.isNullOrEmpty() && queryDependentBlockedPaths.any { path.endsWith(it) }
     }
 
     // Popup destinations (window.open results) are only auto-forwarded into the visible tab
