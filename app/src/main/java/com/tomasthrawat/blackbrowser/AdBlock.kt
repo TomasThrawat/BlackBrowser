@@ -8867,28 +8867,6 @@ object AdBlocker {
         }
     }
 
-    /**
-     * Returns true only for WebView CORS errors whose target URL is one of our intentionally
-     * blocked resources. These are expected side effects of resource blocking, not app failures.
-     */
-    internal fun isExpectedBlockedConsoleError(message: String): Boolean {
-        val lower = message.lowercase(Locale.US)
-        val isCorsError = lower.contains("blocked by cors policy") ||
-            lower.contains("preflight request doesn't pass access control check")
-        if (!isCorsError) return false
-
-        val start = lower.indexOf("http://")
-            .takeIf { it >= 0 }
-            ?: lower.indexOf("https://").takeIf { it >= 0 }
-            ?: return false
-        val relativeEnd = message.substring(start).indexOfFirst { ch ->
-            ch.isWhitespace() || ch == '\'' || ch == '"' || ch == '<' || ch == '>'
-        }
-        val end = if (relativeEnd < 0) message.length else start + relativeEnd
-        val target = message.substring(start, end)
-        return runCatching { blockingReason(Uri.parse(target)) != null }.getOrDefault(false)
-    }
-
     internal fun shouldBlockParts(host: String?, path: String?, query: String?): Boolean =
         blockingReasonParts(host, path, query) != null
 
