@@ -550,9 +550,6 @@ class MainActivity : AppCompatActivity() {
                 // the site's own fallback (e.g. a sign-in page) instead of landing back in
                 // the app that asked for the sign-in. Real browsers (Chrome included) check
                 // for exactly this before rendering; do the same.
-                if (tryHandOffToAppLink(url)) {
-                    return true
-                }
 
                 // Link clicks and JS/meta redirects land here (unlike loadUrlHonest's
                 // app-initiated loads), so the UA has to be corrected for the new
@@ -2439,34 +2436,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // Android gives verified App Link handlers priority in exactly this resolution call --
-    // resolveActivity(MATCH_DEFAULT_ONLY) is what Chrome itself relies on to decide whether
-    // to hand a URL to another app instead of rendering it. If it resolves to some other
-    // installed app (not this browser, and not the bare system chooser -- package "android"
-    // -- which means no single verified/preferred handler exists), that's the OS confirming
-    // a real app claims this exact URL, so send it there via startActivity() exactly like
-    // handleIntentScheme/handleExternalScheme above do for other schemes.
-    private fun tryHandOffToAppLink(url: Uri): Boolean {
-        val intent = Intent(Intent.ACTION_VIEW, url).addCategory(Intent.CATEGORY_BROWSABLE)
-        val resolved = try {
-            packageManager.resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY)
-        } catch (e: Exception) {
-            null
-        } ?: return false
-
-        val targetPackage = resolved.activityInfo?.packageName
-        if (targetPackage == null || targetPackage == packageName || targetPackage == "android") {
-            return false
-        }
-
-        return try {
-            intent.setPackage(targetPackage)
-            startActivity(intent)
-            true
-        } catch (e: ActivityNotFoundException) {
-            false
-        }
-    }
 
     // ---- Ad block / default browser ----
 
