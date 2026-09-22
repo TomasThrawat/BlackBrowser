@@ -420,10 +420,10 @@ class MainActivity : AppCompatActivity() {
             appDownloadIds.clear()
         }
         pendingBlobDownload = null
+        pageFinishGate.clear()
         super.onDestroy()
         tabs.forEach { it.webView.destroy() }
         inFlightAppNavigationUrls.clear()
-        pageFinishGate.clear()
     }
 
     // ---- Tabs ----
@@ -724,29 +724,22 @@ class MainActivity : AppCompatActivity() {
                 request: WebResourceRequest?,
                 error: WebResourceError?
             ) {
-                val shouldLogError = request?.isForMainFrame == true ||
-                    WebViewErrorPolicy.shouldLogNonMainFrameError(
-                        request?.url?.host,
-                        request?.url?.encodedPath
-                    )
-                if (shouldLogError) {
-                    AppFileLogger.log(
-                        this@MainActivity,
-                        "WEBVIEW_ERROR",
-                        "mainFrame=" + request?.isForMainFrame +
-                            " url=" + AppFileLogger.safeUrl(request?.url?.toString()) +
-                            " code=" + error?.errorCode +
-                            " description=" + error?.description
-                    )
-                    AppFileLogger.trace(
-                        this@MainActivity,
-                        "RESOURCE_ERROR",
-                        "mainFrame=" + request?.isForMainFrame +
-                            " code=" + error?.errorCode +
-                            " description=" + AppFileLogger.safeString(error?.description?.toString()) +
-                            " url=" + AppFileLogger.safeUrl(request?.url?.toString())
-                    )
-                }
+                AppFileLogger.log(
+                    this@MainActivity,
+                    "WEBVIEW_ERROR",
+                    "mainFrame=" + request?.isForMainFrame +
+                        " url=" + AppFileLogger.safeUrl(request?.url?.toString()) +
+                        " code=" + error?.errorCode +
+                        " description=" + error?.description
+                )
+                AppFileLogger.trace(
+                    this@MainActivity,
+                    "RESOURCE_ERROR",
+                    "mainFrame=" + request?.isForMainFrame +
+                        " code=" + error?.errorCode +
+                        " description=" + AppFileLogger.safeString(error?.description?.toString()) +
+                        " url=" + AppFileLogger.safeUrl(request?.url?.toString())
+                )
                 super.onReceivedError(view, request, error)
                 if (request?.isForMainFrame == true && view != null &&
                     inFlightAppNavigationUrls[view] == request.url.toString()
@@ -781,8 +774,10 @@ class MainActivity : AppCompatActivity() {
                         " ua=" + AppFileLogger.safeString(view?.settings?.userAgentString) +
                         " cache=" + view?.settings?.cacheMode
                 )
+                if (view != null && url != null) {
+                    pageFinishGate.onPageStarted(view, url)
+                }
                 super.onPageStarted(view, url, favicon)
-                if (view != null && url != null) pageFinishGate.onPageStarted(view, url)
                 // Once Chromium has actually started the main-frame navigation, the original
                 // app dispatch has happened. Release the guard so a later deliberate navigation
                 // is not blocked, including redirect chains that never finish on the original URL.
@@ -792,18 +787,18 @@ class MainActivity : AppCompatActivity() {
             }
 
             override fun onPageFinished(view: WebView?, url: String?) {
-                if (view != null && !pageFinishGate.shouldProcessPageFinished(view, url)) return
+                super.onPageFinished(view, url)
+                if (view == null || !pageFinishGate.shouldProcessPageFinished(view, url)) return
                 AppFileLogger.log(this@MainActivity, "WEBVIEW", "pageFinished url=" + AppFileLogger.safeUrl(url))
                 AppFileLogger.trace(
                     this@MainActivity,
                     "PAGE_FINISHED",
                     "url=" + AppFileLogger.safeUrl(url) +
-                        " title=" + AppFileLogger.safeString(view?.title) +
-                        " ua=" + AppFileLogger.safeString(view?.settings?.userAgentString) +
+                        " title=" + AppFileLogger.safeString(view.title) +
+                        " ua=" + AppFileLogger.safeString(view.settings.userAgentString) +
                         " cookies=" + CookieManager.getInstance().hasCookies()
                 )
-                super.onPageFinished(view, url)
-                if (view != null && url != null && inFlightAppNavigationUrls[view] == url) {
+                if (url != null && inFlightAppNavigationUrls[view] == url) {
                     inFlightAppNavigationUrls.remove(view)
                 }
                 val tab = tabs.find { it.webView === view } ?: return
@@ -2212,8 +2207,6 @@ class MainActivity : AppCompatActivity() {
     // while the first navigation is still in flight. This does not block redirects,
     // subresources, or a deliberate new navigation after the current one finishes.
     private val inFlightAppNavigationUrls = java.util.WeakHashMap<WebView, String>()
-    // WebView may deliver duplicate onPageFinished callbacks for one main-frame load.
-    // Gate downstream work so history/CSS/logging run once per navigation.
     private val pageFinishGate = PageFinishGate<WebView>()
 
     private fun isGoogleSettingsUrl(uri: Uri): Boolean {
