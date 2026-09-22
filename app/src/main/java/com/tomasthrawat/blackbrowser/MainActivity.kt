@@ -724,22 +724,29 @@ class MainActivity : AppCompatActivity() {
                 request: WebResourceRequest?,
                 error: WebResourceError?
             ) {
-                AppFileLogger.log(
-                    this@MainActivity,
-                    "WEBVIEW_ERROR",
-                    "mainFrame=" + request?.isForMainFrame +
-                        " url=" + AppFileLogger.safeUrl(request?.url?.toString()) +
-                        " code=" + error?.errorCode +
-                        " description=" + error?.description
-                )
-                AppFileLogger.trace(
-                    this@MainActivity,
-                    "RESOURCE_ERROR",
-                    "mainFrame=" + request?.isForMainFrame +
-                        " code=" + error?.errorCode +
-                        " description=" + AppFileLogger.safeString(error?.description?.toString()) +
-                        " url=" + AppFileLogger.safeUrl(request?.url?.toString())
-                )
+                val shouldLogError = request?.isForMainFrame == true ||
+                    WebViewErrorPolicy.shouldLogNonMainFrameError(
+                        request?.url?.host,
+                        request?.url?.encodedPath
+                    )
+                if (shouldLogError) {
+                    AppFileLogger.log(
+                        this@MainActivity,
+                        "WEBVIEW_ERROR",
+                        "mainFrame=" + request?.isForMainFrame +
+                            " url=" + AppFileLogger.safeUrl(request?.url?.toString()) +
+                            " code=" + error?.errorCode +
+                            " description=" + error?.description
+                    )
+                    AppFileLogger.trace(
+                        this@MainActivity,
+                        "RESOURCE_ERROR",
+                        "mainFrame=" + request?.isForMainFrame +
+                            " code=" + error?.errorCode +
+                            " description=" + AppFileLogger.safeString(error?.description?.toString()) +
+                            " url=" + AppFileLogger.safeUrl(request?.url?.toString())
+                    )
+                }
                 super.onReceivedError(view, request, error)
                 if (request?.isForMainFrame == true && view != null &&
                     inFlightAppNavigationUrls[view] == request.url.toString()
