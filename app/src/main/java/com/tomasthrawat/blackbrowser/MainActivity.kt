@@ -497,8 +497,19 @@ class MainActivity : AppCompatActivity() {
             ): Boolean {
                 val url = request?.url ?: return false
 
-                if (isGithubArtifactDownloadUrl(url)) {
-                    startDownloadFromWebResourceRequest(view, request, url)
+                val githubArtifactUrl = githubArtifactDownloadUri(url)
+                    ?: url.takeIf { isGithubArtifactDownloadUrl(it) }
+                if (githubArtifactUrl != null) {
+                    if (githubArtifactUrl != url) {
+                        AppFileLogger.logNow(
+                            this@MainActivity,
+                            "DOWNLOAD",
+                            "github artifact page link intercepted source=" +
+                                AppFileLogger.safeUrl(url.toString()) +
+                                " api=" + AppFileLogger.safeUrl(githubArtifactUrl.toString())
+                        )
+                    }
+                    startDownloadFromWebResourceRequest(view, request, githubArtifactUrl)
                     return true
                 }
 
@@ -963,8 +974,19 @@ class MainActivity : AppCompatActivity() {
                     ): Boolean {
                         val destUrl = request?.url ?: run { popup.destroy(); return true }
 
-                        if (isGithubArtifactDownloadUrl(destUrl)) {
-                            startDownloadFromWebResourceRequest(v, request, destUrl)
+                        val githubArtifactUrl = githubArtifactDownloadUri(destUrl)
+                            ?: destUrl.takeIf { isGithubArtifactDownloadUrl(it) }
+                        if (githubArtifactUrl != null) {
+                            if (githubArtifactUrl != destUrl) {
+                                AppFileLogger.logNow(
+                                    this@MainActivity,
+                                    "DOWNLOAD",
+                                    "popup github artifact page link intercepted source=" +
+                                        AppFileLogger.safeUrl(destUrl.toString()) +
+                                        " api=" + AppFileLogger.safeUrl(githubArtifactUrl.toString())
+                                )
+                            }
+                            startDownloadFromWebResourceRequest(v, request, githubArtifactUrl)
                             popup.destroy()
                             return true
                         }
@@ -1280,6 +1302,29 @@ class MainActivity : AppCompatActivity() {
             }
             .setNegativeButton(android.R.string.cancel, null)
             .show()
+    }
+
+    private fun githubArtifactDownloadUri(uri: Uri): Uri? {
+        if (!uri.scheme.equals("https", ignoreCase = true)) return null
+        if (uri.host?.equals("github.com", ignoreCase = true) != true) return null
+
+        val parts = uri.path.orEmpty().trim('/').split('/')
+        if (parts.size != 7) return null
+        if (parts[2] != "actions" || parts[3] != "runs" || parts[5] != "artifacts") return null
+        if (!parts[4].all(Char::isDigit) || !parts[6].all(Char::isDigit)) return null
+        if (parts[0].isBlank() || parts[1].isBlank()) return null
+
+        return Uri.Builder()
+            .scheme("https")
+            .authority("api.github.com")
+            .appendPath("repos")
+            .appendPath(parts[0])
+            .appendPath(parts[1])
+            .appendPath("actions")
+            .appendPath("artifacts")
+            .appendPath(parts[6])
+            .appendPath("zip")
+            .build()
     }
 
     private fun isGithubArtifactDownloadUrl(uri: Uri): Boolean {
