@@ -497,6 +497,11 @@ class MainActivity : AppCompatActivity() {
             ): Boolean {
                 val url = request?.url ?: return false
 
+                if (isGithubArtifactDownloadUrl(url)) {
+                    startDownloadFromWebResourceRequest(view, request, url)
+                    return true
+                }
+
                 AppFileLogger.trace(
                     this@MainActivity,
                     "NAV_INTERCEPT",
@@ -932,6 +937,7 @@ class MainActivity : AppCompatActivity() {
                 val popup = WebView(this@MainActivity)
                 popup.settings.javaScriptEnabled = true
                 popup.settings.domStorageEnabled = true
+                attachDownloadListener(popup)
                 popup.webViewClient = object : WebViewClient() {
                     override fun onRenderProcessGone(
                         v: WebView?,
@@ -956,6 +962,12 @@ class MainActivity : AppCompatActivity() {
                         request: WebResourceRequest?
                     ): Boolean {
                         val destUrl = request?.url ?: run { popup.destroy(); return true }
+
+                        if (isGithubArtifactDownloadUrl(destUrl)) {
+                            startDownloadFromWebResourceRequest(v, request, destUrl)
+                            popup.destroy()
+                            return true
+                        }
 
                         // isUserGesture (checked above, before this popup was even created)
                         // already proves a real tap opened this navigation -- that's exactly
@@ -1054,38 +1066,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        wv.setDownloadListener { url, userAgent, contentDisposition, mimeType, contentLength ->
-            try {
-                val scheme = runCatching { Uri.parse(url).scheme?.lowercase() }.getOrNull()
-                AppFileLogger.logNow(
-                    this,
-                    "DOWNLOAD",
-                    "listener scheme=" + AppFileLogger.safeString(scheme) +
-                        " url=" + AppFileLogger.safeUrl(url) +
-                        " mime=" + mimeType +
-                        " length=" + contentLength +
-                        " disposition=" + AppFileLogger.safeString(contentDisposition) +
-                        " referer=" + AppFileLogger.safeUrl(wv.url)
-                )
-                AppFileLogger.traceNow(
-                    this,
-                    "DOWNLOAD_START",
-                    "scheme=" + AppFileLogger.safeString(scheme) +
-                        " url=" + AppFileLogger.safeUrl(url) +
-                        " mime=" + AppFileLogger.safeString(mimeType) +
-                        " length=" + contentLength +
-                        " referer=" + AppFileLogger.safeUrl(wv.url)
-                )
-                if (scheme == "blob") {
-                    handleBlobDownload(wv, url, contentDisposition, mimeType)
-                } else {
-                    startDownload(url, userAgent, contentDisposition, mimeType, wv.url)
-                }
-            } catch (t: Throwable) {
-                AppFileLogger.logExceptionNow(this, "DOWNLOAD", "download listener failed", t)
-                Toast.makeText(this, getString(R.string.download_failed), Toast.LENGTH_SHORT).show()
-            }
-        }
+        attachDownloadListener(wv)
 
         // Press-and-hold on an <img> (e.g. a photo in a gallery/photos page) offers to
         // download it, the same way a real browser's long-press context menu does --
@@ -1299,6 +1280,104 @@ class MainActivity : AppCompatActivity() {
             }
             .setNegativeButton(android.R.string.cancel, null)
             .show()
+    }
+
+    private fun isGithubArtifactDownloadUrl(uri: Uri): Boolean {
+        if (!uri.scheme.equals("https", ignoreCase = true)) return false
+        val host = uri.host?.lowercase() ?: return false
+        if (host != "api.github.com") return false
+        val path = uri.path?.lowercase() ?: return false
+        return Regex("^/repos/[^/]+/[^/]+/actions/artifacts/[0-9]+/zip$").matches(path)
+    }
+
+    private fun requestHeader(request: WebResourceRequest?, name: String): String? {
+        return request?.requestHeaders?.entries
+            ?.firstOrNull { it.key.equals(name, ignoreCase = true) }
+            ?.value
+            ?.takeIf { it.isNotBlank() }
+    }
+
+    private fun githubArtifactFileName(uri: Uri): String {
+        val parts = uri.path.orEmpty().trimEnd('/').split('/')
+        val artifactId = parts.getOrNull(parts.lastIndex - 1)
+            ?.takeIf { it.all(Char::isDigit) }
+        return if (artifactId != null) {
+            "github-artifact-" + artifactId + ".zip"
+        } else {
+            "github-artifact.zip"
+        }
+    }
+
+    private fun startDownloadFromWebResourceRequest(
+        webView: WebView?,
+        request: WebResourceRequest?,
+        url: Uri
+    ) {
+        val userAgent = requestHeader(request, "User-Agent")
+            ?: webView?.settings?.userAgentString.orEmpty()
+        val referer = requestHeader(request, "Referer")
+            ?: webView?.url
+        val fileName = githubArtifactFileName(url)
+
+        AppFileLogger.logNow(
+            this,
+            "DOWNLOAD",
+            "github artifact download intercepted url=" +
+                AppFileLogger.safeUrl(url.toString()) +
+                " fileName=" + AppFileLogger.safeString(fileName)
+        )
+        AppFileLogger.traceNow(
+            this,
+            "DOWNLOAD_INTERCEPTED",
+            "source=github-actions-artifact url=" +
+                AppFileLogger.safeUrl(url.toString()) +
+                " fileName=" + AppFileLogger.safeString(fileName)
+        )
+
+        runOnUiThread {
+            startDownload(
+                url.toString(),
+                userAgent,
+                "attachment; filename=" + fileName,
+                "application/zip",
+                referer
+            )
+        }
+    }
+
+    private fun attachDownloadListener(webView: WebView) {
+        webView.setDownloadListener { url, userAgent, contentDisposition, mimeType, contentLength ->
+            try {
+                val scheme = runCatching { Uri.parse(url).scheme?.lowercase() }.getOrNull()
+                AppFileLogger.logNow(
+                    this,
+                    "DOWNLOAD",
+                    "listener scheme=" + AppFileLogger.safeString(scheme) +
+                        " url=" + AppFileLogger.safeUrl(url) +
+                        " mime=" + mimeType +
+                        " length=" + contentLength +
+                        " disposition=" + AppFileLogger.safeString(contentDisposition) +
+                        " referer=" + AppFileLogger.safeUrl(webView.url)
+                )
+                AppFileLogger.traceNow(
+                    this,
+                    "DOWNLOAD_START",
+                    "scheme=" + AppFileLogger.safeString(scheme) +
+                        " url=" + AppFileLogger.safeUrl(url) +
+                        " mime=" + AppFileLogger.safeString(mimeType) +
+                        " length=" + contentLength +
+                        " referer=" + AppFileLogger.safeUrl(webView.url)
+                )
+                if (scheme == "blob") {
+                    handleBlobDownload(webView, url, contentDisposition, mimeType)
+                } else {
+                    startDownload(url, userAgent, contentDisposition, mimeType, webView.url)
+                }
+            } catch (t: Throwable) {
+                AppFileLogger.logExceptionNow(this, "DOWNLOAD", "download listener failed", t)
+                Toast.makeText(this, getString(R.string.download_failed), Toast.LENGTH_SHORT).show()
+            }
+        }
     }
 
     private fun handleBlobDownload(
