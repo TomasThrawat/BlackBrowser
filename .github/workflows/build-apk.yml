@@ -33,6 +33,46 @@ jobs:
             git push
           fi
 
+      - name: Remove automatic browser identity override
+        run: |
+          set -euo pipefail
+          TARGET="app/src/main/java/com/tomasthrawat/blackbrowser/MainActivity.kt"
+          python3 - "$TARGET" <<'PY'
+          import re
+          import sys
+          from pathlib import Path
+
+          path = Path(sys.argv[1])
+          text = path.read_text(encoding="utf-8")
+
+          text = text.replace(
+              "        applyUserAgentDataOverride(wv)\n        applyNavigatorUaPatch(wv)\n",
+              "        applyUserAgentDataOverride(wv)\n",
+          )
+
+          text = re.sub(
+              r'''\n    private val uaSpoofOriginRules: Set<String> =\n        uaSpoofHosts\.flatMap \{ listOf\("https://\\$it", "https://\\*\\.\\$it"\) \}\.toSet\(\)\n''',
+              "\n",
+              text,
+          )
+
+          text = re.sub(
+              r'''\n    // Google Identity Services \(the script that renders.*?\n    private fun applyNavigatorUaPatch\(wv: WebView\) \{.*?\n    \}\n''',
+              "\n",
+              text,
+              flags=re.S,
+          )
+
+          path.write_text(text, encoding="utf-8")
+          PY
+          if ! git diff --quiet -- "$TARGET"; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add "$TARGET"
+            git commit -m "fix: remove automatic WebView identity override"
+            git push
+          fi
+
       - name: Apply WebView session fix
         run: |
           set -euo pipefail
