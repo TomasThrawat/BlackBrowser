@@ -465,6 +465,13 @@ class MainActivity : AppCompatActivity() {
         // get stuck instead of completing its redirect.
         wv.settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
 
+        // BB_WEBVIEW_SESSION_FIX_V1
+        // Keep cookies available before the first navigation. They are required by Google
+        // settings and challenge/session flows such as Cloudflare.
+        val cookieManager = CookieManager.getInstance()
+        cookieManager.setAcceptCookie(!isIncognito)
+        cookieManager.setAcceptThirdPartyCookies(wv, !isIncognito)
+
         if (isIncognito) {
             // Private tab: no disk/RAM cache. Note this WebView engine shares one
             // cookie/session store across the whole app process, so this gives
@@ -584,58 +591,17 @@ class MainActivity : AppCompatActivity() {
                 // the app that asked for the sign-in. Real browsers (Chrome included) check
                 // for exactly this before rendering; do the same.
 
-                // Link clicks and JS/meta redirects land here (unlike loadUrlHonest's
-                // app-initiated loads), so the UA has to be corrected for the new
-                // destination here too, before letting the load through. See loadUrlHonest's
-                // comment: identity-provider hosts -- and the hop right after one -- must keep
-                // the disguised UA and never replay a cached redirect-chain response; every
-                // other host keeps the plain UA and LOAD_DEFAULT.
-                val isGoogleSettingsNavigation = isGoogleSettingsUrl(url)
-                val needsUaSpoof = !isGoogleSettingsNavigation && hostNeedsUaSpoof(url.host)
-                val needsFreshLoad = !isGoogleSettingsNavigation &&
-                    (needsUaSpoof || (view?.cameFromIdentityProvider() == true))
-                // A POST navigation -- e.g. the form submit Google's account-chooser step
-                // does the moment an account is tapped -- carries a body that
-                // WebResourceRequest never exposes; there is no way to read it back out to
-                // replay it. loadUrlHonest() below always issues loadUrl(), which is always a
-                // GET, so taking the load over ourselves for a POST silently drops that body
-                // (the selected-account/CSRF data) and the server just re-renders the same
-                // chooser page -- "pick an account -> page reloads -> pick it again", forever.
-                // Only replay through loadUrlHonest for GET/method-less navigations, where no
-                // body exists to lose; for POST, apply the same UA/cache fix in place instead
-                // and let WebView finish the POST it already has, accepting the smaller
-                // reload-current-document risk described below only for this one case.
-                val isPost = request.method?.equals("POST", ignoreCase = true) == true
-                if (needsFreshLoad && !isPost) {
-                    // Setting userAgentString here and then returning false (letting WebView
-                    // finish the navigation it already decided on) hits a known WebView/Chromium
-                    // quirk: changing the UA while a navigation is in flight reloads the CURRENT
-                    // document instead of completing the new one (Chromium's own
-                    // AwSettingsTest#testUpdatingUserAgentWhileLoadingCausesReload is named after
-                    // exactly this). That's what silently turned "open Gmail from search" into
-                    // "stay on the Google search results page" -- mail.google.com was allowed
-                    // through but never actually loaded. Take the load over ourselves the same
-                    // way app-initiated navigations already do, instead of handing WebView an
-                    // in-flight request whose UA just changed under it.
-                    view?.loadUrlHonest(url.toString())
-                    return true
-                }
-                if (needsUaSpoof) {
-                    val targetUa = computeUserAgent(url.host, forceSpoof = true)
-                    if (view?.settings?.userAgentString != targetUa) {
-                        view?.settings?.userAgentString = targetUa
-                    }
-                }
-                if (view?.settings?.cacheMode != if (needsFreshLoad) WebSettings.LOAD_NO_CACHE else WebSettings.LOAD_DEFAULT) {
-                    view?.settings?.cacheMode =
-                        if (needsFreshLoad) WebSettings.LOAD_NO_CACHE else WebSettings.LOAD_DEFAULT
-                }
+                // BB_WEBVIEW_SESSION_FIX_V1
+                // Never mutate User-Agent or cacheMode during a link/redirect navigation.
+                // Android WebView can reload the current document when its User-Agent changes
+                // during a load. A challenge provider can also see that as a changed client.
+                // Let Google SafeSearch/settings submissions, including POST forms, proceed
+                // exactly as WebView issued them so their request body and session state survive.
                 AppFileLogger.trace(
                     this@MainActivity,
                     "NAV_ALLOW",
-                    "fresh=" + needsFreshLoad +
-                        " uaSpoof=" + needsUaSpoof +
-                        " host=" + AppFileLogger.safeString(url.host) +
+                    "host=" + AppFileLogger.safeString(url.host) +
+                        " method=" + AppFileLogger.safeString(request.method) +
                         " url=" + AppFileLogger.safeUrl(url.toString())
                 )
                 return false
@@ -956,6 +922,11 @@ class MainActivity : AppCompatActivity() {
                 val popup = WebView(this@MainActivity)
                 popup.settings.javaScriptEnabled = true
                 popup.settings.domStorageEnabled = true
+                // Keep popup challenge/login flows on the same cookie-capable session policy.
+                val popupCookieManager = CookieManager.getInstance()
+                popupCookieManager.setAcceptCookie(true)
+                popupCookieManager.setAcceptThirdPartyCookies(popup, true)
+                popup.settings.userAgentString = WebSettings.getDefaultUserAgent(this@MainActivity)
                 attachDownloadListener(popup)
                 popup.webViewClient = object : WebViewClient() {
                     override fun onRenderProcessGone(
@@ -1026,13 +997,8 @@ class MainActivity : AppCompatActivity() {
                         // which is what produced the ServiceLogin <-> www.google.com/?pli=1
                         // bounce seen during earlier debugging. Let it keep following its
                         // own chain and only forward once it leaves that host.
-                        if (hostNeedsUaSpoof(destUrl.host)) {
-                            v?.settings?.userAgentString =
-                                computeUserAgent(destUrl.host, forceSpoof = true)
-                            v?.settings?.cacheMode = WebSettings.LOAD_NO_CACHE
-                            return false
-                        }
-
+                        // BB_WEBVIEW_SESSION_FIX_V1
+                        // Keep popup User-Agent and cache policy stable across redirects.
                         popup.destroy()
                         activeWebView.loadUrlHonest(destUrl.toString())
                         return true
@@ -2208,60 +2174,19 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun WebView.loadUrlHonest(url: String) {
-        // The refresh button is the explicit way to reload the current document. Avoid issuing
-        // another identical top-level request from address-bar/history/popup dispatch when that
-        // exact URL is already what this WebView is displaying.
+        // BB_WEBVIEW_SESSION_FIX_V1
+        // Navigation does not silently change WebView identity or cache policy. The only
+        // intentional User-Agent change remains the user's explicit Desktop Site toggle.
         if (url == this.url) return
         if (inFlightAppNavigationUrls[this] == url) return
         inFlightAppNavigationUrls[this] = url
 
-        val parsedUrl = runCatching { Uri.parse(url) }.getOrNull()
-        val host = parsedUrl?.host
-        val isGoogleSettingsNavigation = parsedUrl?.let { isGoogleSettingsUrl(it) } == true
-
-        if (isGoogleSettingsNavigation) {
-            val targetUa = computeUserAgent(host, forceSpoof = false)
-            if (settings.userAgentString != targetUa) {
-                settings.userAgentString = targetUa
-            }
-            if (settings.cacheMode != WebSettings.LOAD_DEFAULT) {
-                settings.cacheMode = WebSettings.LOAD_DEFAULT
-            }
-            AppFileLogger.trace(
-                this@MainActivity,
-                "APP_NAVIGATION",
-                "googleSettings=true url=" + AppFileLogger.safeUrl(url) +
-                    " ua=" + AppFileLogger.safeString(settings.userAgentString)
-            )
-            loadUrl(url)
-            return
-        }
-
-        // Identity-provider hosts (uaSpoofHosts) -- and the hop right after one -- serve
-        // short-lived state tokens (e.g. Google's sign-in "dsh" param) on every redirect hop.
-        // Two things had to stay consistent for exactly these hops: no cached response (a
-        // stale one makes the token look expired) and the same disguised UA the identity
-        // provider itself saw (dropping back to the plain WebView UA one hop later reads, to
-        // the server, as a different client mid-flow). Getting either wrong on its own was
-        // enough to make the provider bounce the flow back to itself in a loop; every other
-        // host keeps LOAD_DEFAULT and the plain UA so normal browsing is unaffected.
-        val needsIdentityNoCache = hostNeedsUaSpoof(host) || cameFromIdentityProvider()
-        val needsUaSpoof = hostNeedsUaSpoof(host)
-        val targetUa = computeUserAgent(host, forceSpoof = needsUaSpoof)
-        if (settings.userAgentString != targetUa) {
-            settings.userAgentString = targetUa
-        }
-        val targetCache = if (needsIdentityNoCache) WebSettings.LOAD_NO_CACHE else WebSettings.LOAD_DEFAULT
-        if (settings.cacheMode != targetCache) {
-            settings.cacheMode = targetCache
-        }
         AppFileLogger.trace(
             this@MainActivity,
             "APP_NAVIGATION",
             "url=" + AppFileLogger.safeUrl(url) +
-                " host=" + AppFileLogger.safeString(host) +
-                " uaSpoof=" + needsUaSpoof +
-                " noCache=" + needsIdentityNoCache +
+                " ua=" + AppFileLogger.safeString(settings.userAgentString) +
+                " cache=" + settings.cacheMode +
                 " desktopMode=" + DesktopModePrefs.isEnabled(this@MainActivity)
         )
         loadUrl(url)
