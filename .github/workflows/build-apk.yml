@@ -52,7 +52,7 @@ jobs:
 
           text = re.sub(
               r'''\n    private val uaSpoofOriginRules: Set<String> =
-          uaSpoofHosts\.flatMap \{ listOf\("https://\$it", "https://\*\.\$it"\) \}\.toSet\(\)
+        uaSpoofHosts\.flatMap \{ listOf\("https://\$it", "https://\*\.\$it"\) \}\.toSet\(\)
 ''',
               "\n",
               text,
