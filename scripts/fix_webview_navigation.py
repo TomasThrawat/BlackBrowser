@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
 from pathlib import Path
-import re
 
-p = Path("app/src/main/java/com/tomasthrawat/blackbrowser/MainActivity.kt")
-s = p.read_text(encoding="utf-8")
-if "BB_WEBVIEW_SESSION_FIX_V1" in s:
-    print("already fixed")
+path = Path("app/src/main/java/com/tomasthrawat/blackbrowser/MainActivity.kt")
+text = path.read_text(encoding="utf-8")
+
+if "BB_WEBVIEW_SESSION_FIX_V1" in text:
+    print("BlackBrowser WebView session fix already applied.")
     raise SystemExit(0)
 
-old = """        if (isIncognito) {
+old_cookie = """        if (isIncognito) {
             // Private tab: no disk/RAM cache. Note this WebView engine shares one
             // cookie/session store across the whole app process, so this gives
             // "no history + no cache" rather than full multi-profile isolation.
             wv.settings.cacheMode = WebSettings.LOAD_NO_CACHE
         }
 """
-new = """        // BB_WEBVIEW_SESSION_FIX_V1
+new_cookie = """        // BB_WEBVIEW_SESSION_FIX_V1
         // Keep cookies available before the first navigation. They are required by Google
         // settings and challenge/session flows such as Cloudflare.
         val cookieManager = CookieManager.getInstance()
@@ -29,18 +29,72 @@ new = """        // BB_WEBVIEW_SESSION_FIX_V1
             wv.settings.cacheMode = WebSettings.LOAD_NO_CACHE
         }
 """
-if old not in s:
-    raise SystemExit("cookie anchor not found")
-s = s.replace(old, new, 1)
+if old_cookie not in text:
+    raise SystemExit("Expected WebView cookie block not found.")
+text = text.replace(old_cookie, new_cookie, 1)
 
-# Stop changing UA/cache during link/redirect navigations.
-pat = r'                // Link clicks and JS/meta redirects land here.*?                return false\n'
-rep = '''                // BB_WEBVIEW_SESSION_FIX_V1
-                // Never mutate User-Agent or cacheMode while WebView is processing a navigation.
-                // Android restarts a load when its User-Agent changes, and challenge providers
-                // can loop when the client identity changes between challenge and continuation.
-                // Google SafeSearch/settings forms, including POST submissions, pass through
-                // unchanged so WebView can preserve the original request body/session state.
+old_nav = """                // Link clicks and JS/meta redirects land here (unlike loadUrlHonest's
+                // app-initiated loads), so the UA has to be corrected for the new
+                // destination here too, before letting the load through. See loadUrlHonest's
+                // comment: identity-provider hosts -- and the hop right after one -- must keep
+                // the disguised UA and never replay a cached redirect-chain response; every
+                // other host keeps the plain UA and LOAD_DEFAULT.
+                val isGoogleSettingsNavigation = isGoogleSettingsUrl(url)
+                val needsUaSpoof = !isGoogleSettingsNavigation && hostNeedsUaSpoof(url.host)
+                val needsFreshLoad = !isGoogleSettingsNavigation &&
+                    (needsUaSpoof || (view?.cameFromIdentityProvider() == true))
+                // A POST navigation -- e.g. the form submit Google's account-chooser step
+                // does the moment an account is tapped -- carries a body that
+                // WebResourceRequest never exposes; there is no way to read it back out to
+                // replay it. loadUrlHonest() below always issues loadUrl(), which is always a
+                // GET, so taking the load over ourselves for a POST silently drops that body
+                // (the selected-account/CSRF data) and the server just re-renders the same
+                // chooser page -- "pick an account -> page reloads -> pick it again", forever.
+                // Only replay through loadUrlHonest for GET/method-less navigations, where no
+                // body exists to lose; for POST, apply the same UA/cache fix in place instead
+                // and let WebView finish the POST it already has, accepting the smaller
+                // reload-current-document risk described below only for this one case.
+                val isPost = request.method?.equals("POST", ignoreCase = true) == true
+                if (needsFreshLoad && !isPost) {
+                    // Setting userAgentString here and then returning false (letting WebView
+                    // finish the navigation it already decided on) hits a known WebView/Chromium
+                    // quirk: changing the UA while a navigation is in flight reloads the CURRENT
+                    // document instead of completing the new one (Chromium's own
+                    // AwSettingsTest#testUpdatingUserAgentWhileLoadingCausesReload is named after
+                    // exactly this). That's what silently turned "open Gmail from search" into
+                    // "stay on the Google search results page" -- mail.google.com was allowed
+                    // through but never actually loaded. Take the load over ourselves the same
+                    // way app-initiated navigations already do, instead of handing WebView an
+                    // in-flight request whose UA just changed under it.
+                    view?.loadUrlHonest(url.toString())
+                    return true
+                }
+                if (needsUaSpoof) {
+                    val targetUa = computeUserAgent(url.host, forceSpoof = true)
+                    if (view?.settings?.userAgentString != targetUa) {
+                        view?.settings?.userAgentString = targetUa
+                    }
+                }
+                if (view?.settings?.cacheMode != if (needsFreshLoad) WebSettings.LOAD_NO_CACHE else WebSettings.LOAD_DEFAULT) {
+                    view?.settings?.cacheMode =
+                        if (needsFreshLoad) WebSettings.LOAD_NO_CACHE else WebSettings.LOAD_DEFAULT
+                }
+                AppFileLogger.trace(
+                    this@MainActivity,
+                    "NAV_ALLOW",
+                    "fresh=" + needsFreshLoad +
+                        " uaSpoof=" + needsUaSpoof +
+                        " host=" + AppFileLogger.safeString(url.host) +
+                        " url=" + AppFileLogger.safeUrl(url.toString())
+                )
+                return false
+"""
+new_nav = """                // BB_WEBVIEW_SESSION_FIX_V1
+                // Never mutate User-Agent or cacheMode during a link/redirect navigation.
+                // Android WebView can reload the current document when its User-Agent changes
+                // during a load. A challenge provider can also see that as a changed client.
+                // Let Google SafeSearch/settings submissions, including POST forms, proceed
+                // exactly as WebView issued them so their request body and session state survive.
                 AppFileLogger.trace(
                     this@MainActivity,
                     "NAV_ALLOW",
@@ -49,51 +103,109 @@ rep = '''                // BB_WEBVIEW_SESSION_FIX_V1
                         " url=" + AppFileLogger.safeUrl(url.toString())
                 )
                 return false
-'''
-s, n = re.subn(pat, rep, s, count=1, flags=re.S)
-if n != 1:
-    raise SystemExit(f"navigation block replacement count={n}")
+"""
+if old_nav not in text:
+    raise SystemExit("Expected main-frame navigation policy block not found.")
+text = text.replace(old_nav, new_nav, 1)
 
-# Keep popup redirect identity stable and enable third-party cookies for popup flows.
-anchor = '''                popup.settings.javaScriptEnabled = true
+old_popup_setup = """                val popup = WebView(this@MainActivity)
+                popup.settings.javaScriptEnabled = true
                 popup.settings.domStorageEnabled = true
                 attachDownloadListener(popup)
-'''
-repl = '''                popup.settings.javaScriptEnabled = true
+"""
+new_popup_setup = """                val popup = WebView(this@MainActivity)
+                popup.settings.javaScriptEnabled = true
                 popup.settings.domStorageEnabled = true
+                // Keep popup challenge/login flows on the same cookie-capable session policy.
                 val popupCookieManager = CookieManager.getInstance()
                 popupCookieManager.setAcceptCookie(true)
                 popupCookieManager.setAcceptThirdPartyCookies(popup, true)
                 popup.settings.userAgentString = WebSettings.getDefaultUserAgent(this@MainActivity)
                 attachDownloadListener(popup)
-'''
-if anchor not in s:
-    raise SystemExit("popup cookie anchor not found")
-s = s.replace(anchor, repl, 1)
+"""
+if old_popup_setup not in text:
+    raise SystemExit("Expected popup setup block not found.")
+text = text.replace(old_popup_setup, new_popup_setup, 1)
 
-pat = r'''                        if (hostNeedsUaSpoof(destUrl.host)) {
+old_popup_ua = """                        if (hostNeedsUaSpoof(destUrl.host)) {
                             v?.settings?.userAgentString =
                                 computeUserAgent(destUrl.host, forceSpoof = true)
                             v?.settings?.cacheMode = WebSettings.LOAD_NO_CACHE
                             return false
                         }
 
-'''
-s, n = re.subn(pat, '''                        // BB_WEBVIEW_SESSION_FIX_V1: keep popup identity stable across redirects.
-''', s, count=1)
-if n != 1:
-    raise SystemExit(f"popup UA replacement count={n}")
+"""
+new_popup_ua = """                        // BB_WEBVIEW_SESSION_FIX_V1
+                        // Keep popup User-Agent and cache policy stable across redirects.
+"""
+if old_popup_ua not in text:
+    raise SystemExit("Expected popup UA/cache block not found.")
+text = text.replace(old_popup_ua, new_popup_ua, 1)
 
-old_tail = '    private fun WebView.loadUrlHonest(url: String) {'
-start = s.find(old_tail)
-marker = '\n    // The legacy UA string above'
-end = s.find(marker, start)
-if start < 0 or end < 0:
-    raise SystemExit("loadUrlHonest boundaries not found")
-new_fun = '''    private fun WebView.loadUrlHonest(url: String) {
+old_load = """    private fun WebView.loadUrlHonest(url: String) {
+        // The refresh button is the explicit way to reload the current document. Avoid issuing
+        // another identical top-level request from address-bar/history/popup dispatch when that
+        // exact URL is already what this WebView is displaying.
+        if (url == this.url) return
+        if (inFlightAppNavigationUrls[this] == url) return
+        inFlightAppNavigationUrls[this] = url
+
+        val parsedUrl = runCatching { Uri.parse(url) }.getOrNull()
+        val host = parsedUrl?.host
+        val isGoogleSettingsNavigation = parsedUrl?.let { isGoogleSettingsUrl(it) } == true
+
+        if (isGoogleSettingsNavigation) {
+            val targetUa = computeUserAgent(host, forceSpoof = false)
+            if (settings.userAgentString != targetUa) {
+                settings.userAgentString = targetUa
+            }
+            if (settings.cacheMode != WebSettings.LOAD_DEFAULT) {
+                settings.cacheMode = WebSettings.LOAD_DEFAULT
+            }
+            AppFileLogger.trace(
+                this@MainActivity,
+                "APP_NAVIGATION",
+                "googleSettings=true url=" + AppFileLogger.safeUrl(url) +
+                    " ua=" + AppFileLogger.safeString(settings.userAgentString)
+            )
+            loadUrl(url)
+            return
+        }
+
+        // Identity-provider hosts (uaSpoofHosts) -- and the hop right after one -- serve
+        // short-lived state tokens (e.g. Google's sign-in "dsh" param) on every redirect hop.
+        // Two things had to stay consistent for exactly these hops: no cached response (a
+        // stale one makes the token look expired) and the same disguised UA the identity
+        // provider itself saw (dropping back to the plain WebView UA one hop later reads, to
+        // the server, as a different client mid-flow). Getting either wrong on its own was
+        // enough to make the provider bounce the flow back to itself in a loop; every other
+        // host keeps LOAD_DEFAULT and the plain UA so normal browsing is unaffected.
+        val needsIdentityNoCache = hostNeedsUaSpoof(host) || cameFromIdentityProvider()
+        val needsUaSpoof = hostNeedsUaSpoof(host)
+        val targetUa = computeUserAgent(host, forceSpoof = needsUaSpoof)
+        if (settings.userAgentString != targetUa) {
+            settings.userAgentString = targetUa
+        }
+        val targetCache = if (needsIdentityNoCache) WebSettings.LOAD_NO_CACHE else WebSettings.LOAD_DEFAULT
+        if (settings.cacheMode != targetCache) {
+            settings.cacheMode = targetCache
+        }
+        AppFileLogger.trace(
+            this@MainActivity,
+            "APP_NAVIGATION",
+            "url=" + AppFileLogger.safeUrl(url) +
+                " host=" + AppFileLogger.safeString(host) +
+                " uaSpoof=" + needsUaSpoof +
+                " noCache=" + needsIdentityNoCache +
+                " desktopMode=" + DesktopModePrefs.isEnabled(this@MainActivity)
+        )
+        loadUrl(url)
+    }
+"""
+new_load = """    private fun WebView.loadUrlHonest(url: String) {
         // BB_WEBVIEW_SESSION_FIX_V1
-        // Keep navigation identity/cache policy stable. Explicit Desktop Site changes are
-        // handled only by the user action that toggles that mode.
+        // Navigation does not silently change WebView identity or cache policy. The only
+        // intentional User-Agent change remains the user's explicit Desktop Site toggle.
         if (url == this.url) return
         if (inFlightAppNavigationUrls[this] == url) return
         inFlightAppNavigationUrls[this] = url
@@ -108,8 +220,21 @@ new_fun = '''    private fun WebView.loadUrlHonest(url: String) {
         )
         loadUrl(url)
     }
-'''
-s = s[:start] + new_fun + s[end:]
+"""
+if old_load not in text:
+    raise SystemExit("Expected loadUrlHonest block not found.")
+text = text.replace(old_load, new_load, 1)
 
-p.write_text(s, encoding="utf-8")
-print("patched", len(s))
+# Ensure the changed source really contains all four intended protections.
+required = [
+    "BB_WEBVIEW_SESSION_FIX_V1",
+    "cookieManager.setAcceptThirdPartyCookies(wv, !isIncognito)",
+    "popupCookieManager.setAcceptThirdPartyCookies(popup, true)",
+    "private fun WebView.loadUrlHonest(url: String)"
+]
+for item in required:
+    if item not in text:
+        raise SystemExit("Post-patch verification failed: " + item)
+
+path.write_text(text, encoding="utf-8")
+print("WebView session/navigation fix applied and verified.")
