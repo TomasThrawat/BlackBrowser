@@ -497,7 +497,6 @@ class MainActivity : AppCompatActivity() {
         wv.settings.userAgentString = computeUserAgent(null)
         applyUserAgentMetadata(wv)
         applyUserAgentDataOverride(wv)
-        applyNavigatorUaPatch(wv)
 
         wv.setLayerType(View.LAYER_TYPE_HARDWARE, null)
 
@@ -2316,53 +2315,6 @@ class MainActivity : AppCompatActivity() {
         uaScriptHandlers[wv] = WebViewCompat.addDocumentStartJavaScript(wv, js, setOf("*"))
     }
 
-    // Google Identity Services (the script that renders "Sign in with Google" buttons/
-    // prompts) -- and Facebook/Microsoft/Apple's equivalents -- read navigator.userAgent
-    // client-side to decide whether to render at all, and refuse to on an embedded WebView
-    // (detected via the same "; wv" / "Version/4.0 " tokens baseUserAgent() strips above).
-    // That check runs in whichever frame actually renders the button, which is almost
-    // always a same-page iframe pointing at the identity provider's own domain -- not a
-    // top-level navigation to it -- so the host-scoped UA swap in shouldOverrideUrlLoading
-    // (which only takes effect on the *next top-level* navigation) never reaches it: the
-    // iframe inherits this WebView's one process-wide UA, which was set for whatever host
-    // the *page itself* is on, and arbitrary third-party sites can't all be added to
-    // uaSpoofHosts above. This is why the button silently fails to appear on some sites
-    // while working fine as a direct redirect to accounts.google.com on others.
-    //
-    // Patching navigator.userAgent client-side is the fix, but it must be scoped to the
-    // same origins uaSpoofHosts already covers (uaSpoofOriginRules above), not every frame
-    // on every page (the previous "*" rule here). Registering it globally re-created, on
-    // the JS side, the exact declared-UA-vs-real-fingerprint mismatch this file's other UA
-    // logic exists to avoid: the network-level User-Agent header only drops "; wv" /
-    // "Version/4.0 " for uaSpoofHosts (see baseUserAgent), so a "*" script left every other
-    // site's JS-visible navigator.userAgent looking like a full desktop/Chrome browser while
-    // its actual HTTP request still declared itself as an embedded WebView. Bot-management
-    // checks (Cloudflare's "Verify you are human" interstitial included) specifically flag
-    // that inconsistency as tampered/automated traffic -- which is why the challenge kept
-    // reissuing itself right after being solved: solving it doesn't change the underlying
-    // request's fingerprint, so the very next request still read as suspicious. Restricting
-    // the script to uaSpoofOriginRules keeps the JS and network UA consistent everywhere
-    // except the handful of hosts that genuinely need the disguise.
-    private fun applyNavigatorUaPatch(wv: WebView) {
-        if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) return
-
-        val js = """
-            (function() {
-                try {
-                    var real = navigator.userAgent;
-                    var patched = real.replace('; wv', '').replace('Version/4.0 ', '');
-                    if (patched !== real) {
-                        Object.defineProperty(navigator, 'userAgent', {
-                            get: function() { return patched; },
-                            configurable: true
-                        });
-                    }
-                } catch (e) {}
-            })();
-        """.trimIndent()
-
-        WebViewCompat.addDocumentStartJavaScript(wv, js, uaSpoofOriginRules)
-    }
 
     private fun updateDesktopSiteIcon() {
         val enabled = DesktopModePrefs.isEnabled(this)
