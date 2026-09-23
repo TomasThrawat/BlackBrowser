@@ -52,7 +52,7 @@ jobs:
 
           text = re.sub(
               r'''\n    private val uaSpoofOriginRules: Set<String> =
-        uaSpoofHosts\.flatMap \{ listOf\("https://\$it", "https://\*\.\$it"\) \}\.toSet\(\)
+          uaSpoofHosts\.flatMap \{ listOf\("https://\$it", "https://\*\.\$it"\) \}\.toSet\(\)
 ''',
               "\n",
               text,
@@ -72,55 +72,6 @@ jobs:
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add "$TARGET"
             git commit -m "fix: remove automatic WebView identity override"
-            git push
-          fi
-
-      - name: Persist Google preference cookies
-        run: |
-          set -euo pipefail
-          TARGET="app/src/main/java/com/tomasthrawat/blackbrowser/MainActivity.kt"
-          python3 - "$TARGET" <<'PY'
-          import sys
-          from pathlib import Path
-
-          path = Path(sys.argv[1])
-          text = path.read_text(encoding="utf-8")
-
-          helper = '''    private fun isGoogleOriginUrl(rawUrl: String?): Boolean {
-              val uri = runCatching { Uri.parse(rawUrl) }.getOrNull() ?: return false
-              val host = uri.host?.lowercase() ?: return false
-              return host == "google.com" || host.endsWith(".google.com")
-          }
-
-'''
-          marker = '''    private fun isGoogleSettingsUrl(uri: Uri): Boolean {
-'''
-          if "private fun isGoogleOriginUrl" not in text:
-              if marker not in text:
-                  raise SystemExit("Google settings helper anchor not found")
-              text = text.replace(marker, helper + marker, 1)
-
-          old = '''                    val finishedUri = runCatching { Uri.parse(url) }.getOrNull()
-                    if (finishedUri != null && isGoogleSettingsUrl(finishedUri)) {
-                        runCatching { CookieManager.getInstance().flush() }
-                    }
-'''
-          new = '''                    if (isGoogleOriginUrl(url)) {
-                        runCatching { CookieManager.getInstance().flush() }
-                    }
-'''
-          if old in text:
-              text = text.replace(old, new, 1)
-          elif "if (isGoogleOriginUrl(url))" not in text:
-              raise SystemExit("Google cookie flush anchor not found")
-
-          path.write_text(text, encoding="utf-8")
-          PY
-          if ! git diff --quiet -- "$TARGET"; then
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add "$TARGET"
-            git commit -m "fix: persist Google preference cookies"
             git push
           fi
 
