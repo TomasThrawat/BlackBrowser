@@ -573,6 +573,16 @@ class MainActivity : AppCompatActivity() {
                 if (url.scheme == "intent") {
                     return handleIntentScheme(url.toString())
                 }
+                // BB_WEBVIEW_SESSION_FIX_V2
+                // Cloudflare Turnstile and other embedded browser flows may use
+                // about:blank/about:srcdoc as internal WebView documents/frames.
+                // Chromium owns these URLs, so never hand them to ACTION_VIEW.
+                val internalAboutUrl = url.toString().lowercase()
+                if (internalAboutUrl == "about:blank" ||
+                    internalAboutUrl.startsWith("about:srcdoc")
+                ) {
+                    return false
+                }
                 // Blob URLs are created and consumed inside the current WebView origin.
                 // Sending them to ACTION_VIEW would bypass the WebView download path.
                 if (url.scheme == "blob") {
@@ -776,6 +786,15 @@ class MainActivity : AppCompatActivity() {
                 )
                 if (url != null && inFlightAppNavigationUrls[view] == url) {
                     inFlightAppNavigationUrls.remove(view)
+                }
+                // Google stores browser preferences such as SafeSearch in cookies.
+                // Flush after the Google settings document finishes so preference writes
+                // are persisted before a WebView/activity restart can race them.
+                if (url != null) {
+                    val finishedUri = runCatching { Uri.parse(url) }.getOrNull()
+                    if (finishedUri != null && isGoogleSettingsUrl(finishedUri)) {
+                        runCatching { CookieManager.getInstance().flush() }
+                    }
                 }
                 val tab = tabs.find { it.webView === view } ?: return
                 tab.url = url ?: tab.url
