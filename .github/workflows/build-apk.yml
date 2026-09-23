@@ -19,6 +19,20 @@ jobs:
           GIT_CONFIG_KEY_0: init.defaultBranch
           GIT_CONFIG_VALUE_0: main
 
+      - name: Recover broken patch script
+        run: |
+          set -euo pipefail
+          PATCHER="scripts/fix_webview_navigation.py"
+          if grep -q "BB_WEBVIEW_SESSION_FIX_V3" "$PATCHER"; then
+            git fetch --no-tags --depth=1 origin 3e113c7db8fcb35eca0396d10a5cbfcf2b623928
+            git checkout 3e113c7db8fcb35eca0396d10a5cbfcf2b623928 -- "$PATCHER"
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add "$PATCHER"
+            git commit -m "fix: restore WebView patch script"
+            git push
+          fi
+
       - name: Apply WebView session fix
         run: |
           set -euo pipefail
@@ -60,7 +74,7 @@ jobs:
           test -x "$SDK_BUILD_TOOLS/aapt"
           "$SDK_BUILD_TOOLS/apksigner" verify --verbose --print-certs "$APK"
           "$SDK_BUILD_TOOLS/zipalign" -c -v 4 "$APK"
-          EXPECTED_VERSION_CODE="${GITHUB_RUN_NUMBER:-145}"
+          EXPECTED_VERSION_CODE="$GITHUB_RUN_NUMBER"
           "$SDK_BUILD_TOOLS/aapt" dump badging "$APK" | grep -F "package: name='com.tomasthrawat.blackbrowser' versionCode='${EXPECTED_VERSION_CODE}'"
           ls -lh "$APK"
 
