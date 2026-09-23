@@ -4,6 +4,73 @@ from pathlib import Path
 path = Path("app/src/main/java/com/tomasthrawat/blackbrowser/MainActivity.kt")
 text = path.read_text(encoding="utf-8")
 
+# BB_WEBVIEW_SESSION_FIX_V2
+# V1 is already present in MainActivity on this branch. Apply the remaining targeted
+# fixes once, then exit so the legacy V1 patch block below is not re-run.
+if "BB_WEBVIEW_SESSION_FIX_V1" in text and "BB_WEBVIEW_SESSION_FIX_V2" not in text:
+    old_about = """                if (url.scheme == "intent") {
+                    return handleIntentScheme(url.toString())
+                }
+                // Blob URLs are created and consumed inside the current WebView origin.
+                // Sending them to ACTION_VIEW would bypass the WebView download path.
+                if (url.scheme == "blob") {
+                    return false
+                }
+                if (url.scheme != "http" && url.scheme != "https") {
+                    return handleExternalScheme(url.toString())
+                }
+"""
+    new_about = """                if (url.scheme == "intent") {
+                    return handleIntentScheme(url.toString())
+                }
+                // BB_WEBVIEW_SESSION_FIX_V2
+                // Cloudflare Turnstile and other embedded browser flows may use
+                // about:blank/about:srcdoc as internal WebView documents/frames.
+                // Chromium owns these URLs, so never hand them to ACTION_VIEW.
+                val internalAboutUrl = url.toString().lowercase()
+                if (internalAboutUrl == "about:blank" ||
+                    internalAboutUrl.startsWith("about:srcdoc")
+                ) {
+                    return false
+                }
+                // Blob URLs are created and consumed inside the current WebView origin.
+                // Sending them to ACTION_VIEW would bypass the WebView download path.
+                if (url.scheme == "blob") {
+                    return false
+                }
+                if (url.scheme != "http" && url.scheme != "https") {
+                    return handleExternalScheme(url.toString())
+                }
+"""
+    old_finish = """                if (url != null && inFlightAppNavigationUrls[view] == url) {
+                    inFlightAppNavigationUrls.remove(view)
+                }
+                val tab = tabs.find { it.webView === view } ?: return
+"""
+    new_finish = """                if (url != null && inFlightAppNavigationUrls[view] == url) {
+                    inFlightAppNavigationUrls.remove(view)
+                }
+                // Google stores browser preferences such as SafeSearch in cookies.
+                // Flush after the Google settings document finishes so preference writes
+                // are persisted before a WebView/activity restart can race them.
+                if (url != null) {
+                    val finishedUri = runCatching { Uri.parse(url) }.getOrNull()
+                    if (finishedUri != null && isGoogleSettingsUrl(finishedUri)) {
+                        runCatching { CookieManager.getInstance().flush() }
+                    }
+                }
+                val tab = tabs.find { it.webView === view } ?: return
+"""
+    if old_about not in text:
+        raise SystemExit("V2 navigation anchor not found")
+    if old_finish not in text:
+        raise SystemExit("V2 page-finish anchor not found")
+    text = text.replace(old_about, new_about, 1)
+    text = text.replace(old_finish, new_finish, 1)
+    path.write_text(text, encoding="utf-8")
+    print("BlackBrowser WebView session fix V2 applied.")
+    raise SystemExit(0)
+
 if "BB_WEBVIEW_SESSION_FIX_V1" in text:
     print("BlackBrowser WebView session fix already applied.")
     raise SystemExit(0)
