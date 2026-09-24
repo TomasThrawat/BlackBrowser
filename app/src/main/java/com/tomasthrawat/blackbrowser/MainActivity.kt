@@ -536,6 +536,23 @@ class MainActivity : AppCompatActivity() {
                     return true
                 }
 
+                // A small subset of servers responds to an already-rendered page with a 5xx,
+                // while the page/client immediately asks WebView for the exact same GET again.
+                // That creates a tight navigation/reload loop. Suppress only that exact main-frame
+                // GET for a short cooldown after a 5xx; app-initiated loadUrl/reload calls do not
+                // pass through shouldOverrideUrlLoading and therefore remain available to the user.
+                if (request.isForMainFrame &&
+                    request.method.equals("GET", ignoreCase = true) &&
+                    mainFrameRetryGuard.shouldSuppress(url)
+                ) {
+                    AppFileLogger.trace(
+                        this@MainActivity,
+                        "NAV_SUPPRESS_RETRY",
+                        "mainFrame=true method=GET url=" + AppFileLogger.safeUrl(url.toString())
+                    )
+                    return true
+                }
+
                 AppFileLogger.trace(
                     this@MainActivity,
                     "NAV_INTERCEPT",
@@ -738,11 +755,18 @@ class MainActivity : AppCompatActivity() {
                 request: WebResourceRequest?,
                 errorResponse: WebResourceResponse?
             ) {
+                val statusCode = errorResponse?.statusCode ?: -1
+                if (request?.isForMainFrame == true &&
+                    request.method.equals("GET", ignoreCase = true) &&
+                    statusCode in 500..599
+                ) {
+                    mainFrameRetryGuard.record5xx(request.url.toString())
+                }
                 AppFileLogger.trace(
                     this@MainActivity,
                     "HTTP_ERROR",
                     "mainFrame=" + request?.isForMainFrame +
-                        " status=" + errorResponse?.statusCode +
+                        " status=" + statusCode +
                         " reason=" + AppFileLogger.safeString(errorResponse?.reasonPhrase) +
                         " mime=" + AppFileLogger.safeString(errorResponse?.mimeType) +
                         " url=" + AppFileLogger.safeUrl(request?.url?.toString())
@@ -761,6 +785,7 @@ class MainActivity : AppCompatActivity() {
                 )
                 if (view != null && url != null) {
                     pageFinishGate.onPageStarted(view, url)
+                    mainFrameRetryGuard.onPageStarted(url)
                 }
                 super.onPageStarted(view, url, favicon)
                 // Once Chromium has actually started the main-frame navigation, the original
@@ -2179,6 +2204,7 @@ class MainActivity : AppCompatActivity() {
     // subresources, or a deliberate new navigation after the current one finishes.
     private val inFlightAppNavigationUrls = java.util.WeakHashMap<WebView, String>()
     private val pageFinishGate = PageFinishGate<WebView>()
+    private val mainFrameRetryGuard = MainFrameRetryGuard()
 
     private fun isGoogleSettingsUrl(uri: Uri): Boolean {
         val host = uri.host?.lowercase() ?: return false
