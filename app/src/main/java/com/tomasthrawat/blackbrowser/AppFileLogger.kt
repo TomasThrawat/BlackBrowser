@@ -6,6 +6,8 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.os.ParcelFileDescriptor
+import android.system.Os
+import android.system.OsConstants
 import android.provider.MediaStore
 import android.util.Log
 import java.io.PrintWriter
@@ -97,12 +99,14 @@ object AppFileLogger {
             context,
             tag,
             "EXCEPTION",
-            message + "\n" + stack
+            message + "
+" + stack
         )
     }
 
     fun safeString(value: String?): String =
-        value?.replace("\n", "\\n")?.replace("\r", "\\r") ?: "<null>"
+        value?.replace("
+", "\n")?.replace("", "\r") ?: "<null>"
 
     fun safeUrl(value: String?): String {
         if (value.isNullOrBlank()) return "<null>"
@@ -201,11 +205,7 @@ object AppFileLogger {
                         stream.flush()
                     }
                 } else {
-                    val descriptor = context.contentResolver.openFileDescriptor(uri, "wa") ?: return
-                    ParcelFileDescriptor.AutoCloseOutputStream(descriptor).use { stream ->
-                        stream.write(line.toByteArray(Charsets.UTF_8))
-                        stream.flush()
-                    }
+                    appendToContentUri(context, uri, line)
                 }
             }
         } catch (t: Throwable) {
@@ -221,7 +221,8 @@ object AppFileLogger {
             "yyyy-MM-dd HH:mm:ss.SSS Z",
             Locale.US
         ).format(Date())
-        return timestamp + " [" + kind + "][" + tag + "] " + message + "\n"
+        return timestamp + " [" + kind + "][" + tag + "] " + message + "
+"
     }
 
     private fun ensureLogUriLocked(context: Context): Uri? {
@@ -263,6 +264,26 @@ object AppFileLogger {
             values
         ) ?: return null
 
+        val created = runCatching {
+            val header = formatLine(
+                "LOGGER",
+                "TRACE",
+                "LOGGER_FILE_CREATED path=Download/BlackBrowser/" + FILE_NAME
+            )
+            context.contentResolver.openFileDescriptor(uri, "w")?.use { descriptor ->
+                ParcelFileDescriptor.AutoCloseOutputStream(descriptor).use { stream ->
+                    stream.write(header.toByteArray(Charsets.UTF_8))
+                    stream.flush()
+                }
+            } ?: error("openFileDescriptor(w) returned null")
+            true
+        }.getOrElse { false }
+
+        if (!created) {
+            runCatching { context.contentResolver.delete(uri, null, null) }
+            return null
+        }
+
         val finalized = runCatching {
             context.contentResolver.update(
                 uri,
@@ -284,12 +305,22 @@ object AppFileLogger {
         return uri
     }
 
+    private fun appendToContentUri(context: Context, uri: Uri, line: String) {
+        val descriptor = context.contentResolver.openFileDescriptor(uri, "rw")
+            ?: error("openFileDescriptor(rw) returned null")
+        ParcelFileDescriptor.AutoCloseOutputStream(descriptor).use { stream ->
+            Os.lseek(stream.fd, 0L, OsConstants.SEEK_END)
+            stream.write(line.toByteArray(Charsets.UTF_8))
+            stream.flush()
+        }
+    }
+
     private fun uriStillWritable(context: Context, uri: Uri): Boolean {
         return try {
             if (uri.scheme == "file") {
                 java.io.File(uri.path ?: return false).exists()
             } else {
-                context.contentResolver.openFileDescriptor(uri, "wa")?.use { } != null
+                context.contentResolver.openFileDescriptor(uri, "rw")?.use { } != null
             }
         } catch (_: Throwable) {
             false
