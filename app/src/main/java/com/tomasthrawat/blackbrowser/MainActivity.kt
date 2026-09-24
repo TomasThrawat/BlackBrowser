@@ -52,7 +52,7 @@ import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
-import androidx.browser.customtabs.CustomTabsIntent
+import androidx.browser.customtabs.CustomTabsClient\nimport androidx.browser.customtabs.CustomTabsIntent
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -2439,6 +2439,52 @@ class MainActivity : AppCompatActivity() {
             path.startsWith("/o/oauth")
     }
 
+    private fun findExternalCustomTabsPackage(): String? {
+        val serviceIntent = Intent("android.support.customtabs.action.CustomTabsService")
+        val providers = packageManager.queryIntentServices(serviceIntent, 0)
+            .asSequence()
+            .mapNotNull { it.serviceInfo?.packageName }
+            .filter { it != packageName }
+            .distinct()
+            .toList()
+
+        if (providers.isEmpty()) return null
+
+        val defaultViewPackage = packageManager.resolveActivity(
+            Intent(Intent.ACTION_VIEW, Uri.parse("http://")),
+            PackageManager.MATCH_DEFAULT_ONLY
+        )?.activityInfo?.packageName
+            ?.takeUnless { it == packageName }
+
+        val candidates = buildList {
+            if (defaultViewPackage != null) add(defaultViewPackage)
+            addAll(providers)
+        }
+
+        return CustomTabsClient.getPackageName(this, candidates, true)
+            ?.takeUnless { it == packageName }
+    }
+
+    private fun findExternalBrowserPackage(uri: Uri): String? {
+        val viewIntent = Intent(Intent.ACTION_VIEW, uri).apply {
+            addCategory(Intent.CATEGORY_BROWSABLE)
+        }
+
+        val defaultPackage = packageManager.resolveActivity(
+            viewIntent,
+            PackageManager.MATCH_DEFAULT_ONLY
+        )?.activityInfo?.packageName
+            ?.takeUnless { it == packageName }
+
+        if (defaultPackage != null) return defaultPackage
+
+        return packageManager.queryIntentActivities(viewIntent, 0)
+            .asSequence()
+            .mapNotNull { it.activityInfo?.packageName }
+            .distinct()
+            .firstOrNull { it != packageName }
+    }
+
     private fun openGoogleAuthentication(uri: Uri, webView: WebView?): Boolean {
         if (!isGoogleAuthenticationUrl(uri)) return false
         if (googleAuthHandoffInProgress) {
@@ -2446,30 +2492,71 @@ class MainActivity : AppCompatActivity() {
             return true
         }
 
-        googleAuthHandoffInProgress = true
         webView?.stopLoading()
+
+        val customTabsPackage = findExternalCustomTabsPackage()
+        val browserPackage = customTabsPackage ?: findExternalBrowserPackage(uri)
+        AppFileLogger.trace(
+            this,
+            "GOOGLE_AUTH_PROVIDER",
+            "customTabs=" + AppFileLogger.safeString(customTabsPackage) +
+                " browser=" + AppFileLogger.safeString(browserPackage)
+        )
+
+        if (browserPackage == null) {
+            Toast.makeText(
+                this,
+                "No external browser is installed for Google sign-in.",
+                Toast.LENGTH_LONG
+            ).show()
+            return true
+        }
+
+        googleAuthHandoffInProgress = true
         return try {
-            CustomTabsIntent.Builder()
-                .setShowTitle(true)
-                .build()
-                .launchUrl(this, uri)
+            if (customTabsPackage != null) {
+                val customTabsIntent = CustomTabsIntent.Builder()
+                    .setShowTitle(true)
+                    .build()
+                customTabsIntent.intent.setPackage(customTabsPackage)
+                customTabsIntent.launchUrl(this, uri)
+            } else {
+                startActivity(
+                    Intent(Intent.ACTION_VIEW, uri).apply {
+                        addCategory(Intent.CATEGORY_BROWSABLE)
+                        setPackage(browserPackage)
+                    }
+                )
+            }
             true
         } catch (e: ActivityNotFoundException) {
             googleAuthHandoffInProgress = false
-            try {
-                startActivity(Intent(Intent.ACTION_VIEW, uri))
-                true
-            } catch (_: ActivityNotFoundException) {
-                Toast.makeText(
-                    this,
-                    "No supported browser is installed for Google sign-in.",
-                    Toast.LENGTH_LONG
-                ).show()
-                false
-            }
-        } catch (_: Exception) {
+            Toast.makeText(
+                this,
+                "No external browser is available for Google sign-in.",
+                Toast.LENGTH_LONG
+            ).show()
+            AppFileLogger.logExceptionNow(
+                this,
+                "GOOGLE_AUTH",
+                "external browser launch failed",
+                e
+            )
+            true
+        } catch (e: Exception) {
             googleAuthHandoffInProgress = false
-            false
+            Toast.makeText(
+                this,
+                "Google sign-in could not be opened externally.",
+                Toast.LENGTH_LONG
+            ).show()
+            AppFileLogger.logExceptionNow(
+                this,
+                "GOOGLE_AUTH",
+                "external authentication launch failed",
+                e
+            )
+            true
         }
     }
 
