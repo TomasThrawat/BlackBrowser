@@ -28,8 +28,7 @@ object AppFileLogger {
     private const val PREFS = "blackbrowser_diagnostics"
     private const val PREF_LOG_URI = "log_uri"
     private const val FILE_NAME = "BlackBrowser-Diagnostics.log"
-    private const val RELATIVE_PATH =
-        Environment.DIRECTORY_DOWNLOADS + "/BlackBrowser"
+    private const val RELATIVE_PATH = "Download/BlackBrowser"
     private const val MIME_TYPE = "text/plain"
 
     private val lock = Any()
