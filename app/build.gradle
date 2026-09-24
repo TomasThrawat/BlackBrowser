@@ -6,7 +6,7 @@ def ciRunNumber = System.getenv("GITHUB_RUN_NUMBER")
 def ciVersionCode = ciRunNumber?.isInteger() ? ciRunNumber.toInteger() : 145
 
 android {
-    namespace 'com.tomasthrawat.blackbrowser'
+    namespace = 'com.tomasthrawat.blackbrowser'
     compileSdk 37
 
     defaultConfig {
@@ -20,7 +20,7 @@ android {
     buildTypes {
         release {
             minifyEnabled true
-            shrinkResources true
+            shrinkResources = true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
