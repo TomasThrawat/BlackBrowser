@@ -1,10 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:orientation="horizontal"
     android:gravity="center_vertical"
-    android:background="?android:attr/selectableItemBackground"
+    android:foreground="?android:attr/selectableItemBackground"
     android:paddingTop="10dp"
     android:paddingBottom="10dp">
 
@@ -14,7 +15,7 @@
         android:layout_height="16dp"
         android:layout_marginEnd="6dp"
         android:src="@drawable/ic_incognito"
-        android:tint="@color/incognito_purple"
+        app:tint="@color/incognito_purple"
         android:contentDescription="@string/incognito_tab_desc"
         android:visibility="gone" />
 
@@ -34,7 +35,7 @@
         android:layout_height="32dp"
         android:layout_marginStart="8dp"
         android:gravity="center"
-        android:text="\u00D7"
+        android:text="@string/close_tab_symbol"
         android:textColor="@color/close_red"
         android:textSize="20sp"
         android:textStyle="bold"

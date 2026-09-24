@@ -39,27 +39,7 @@ jobs:
         run: gradle testDebugUnitTest --stacktrace
 
       - name: Run Android lint
-        run: |
-          set +e
-          gradle lintDebug --stacktrace
-          status=$?
-          echo "LINT_EXIT_CODE=$status" >> "$GITHUB_ENV"
-          exit 0
-
-      - name: Print complete lint report
-        if: always()
-        run: |
-          report="app/build/intermediates/lint_intermediate_text_report/debug/lintReportDebug/lint-results-debug.txt"
-          if [ -f "$report" ]; then
-            cat "$report"
-          else
-            echo "Lint text report not found: $report"
-          fi
-
-      - name: Fail when lint is not clean
-        if: always()
-        run: |
-          test "${LINT_EXIT_CODE:-1}" -eq 0
+        run: gradle lintDebug --stacktrace
 
       - name: Build debug APK
         run: gradle assembleDebug --stacktrace

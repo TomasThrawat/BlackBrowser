@@ -436,8 +436,25 @@ class MainActivity : AppCompatActivity() {
         super.onDestroy()
     }
 
+    private fun rendererGoneMessage(
+        prefix: String,
+        detail: android.webkit.RenderProcessGoneDetail?,
+        url: String?
+    ): String {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            return prefix +
+                " didCrash=" + detail?.didCrash() +
+                " priorityAtExit=" + detail?.rendererPriorityAtExit() +
+                " url=" + AppFileLogger.safeUrl(url)
+        }
+        return prefix +
+            " api=" + Build.VERSION.SDK_INT +
+            " url=" + AppFileLogger.safeUrl(url)
+    }
+
     // ---- Tabs ----
 
+    @SuppressLint("SetJavaScriptEnabled")
     private fun createWebView(isIncognito: Boolean = false): WebView {
         val wv = WebView(this)
         wv.layoutParams = FrameLayout.LayoutParams(
@@ -658,16 +675,12 @@ class MainActivity : AppCompatActivity() {
                 AppFileLogger.logNow(
                     this@MainActivity,
                     "WEBVIEW_RENDER",
-                    "rendererGone didCrash=" + detail?.didCrash() +
-                        " priorityAtExit=" + detail?.rendererPriorityAtExit() +
-                        " url=" + AppFileLogger.safeUrl(view?.url)
+                    rendererGoneMessage("rendererGone", detail, view?.url)
                 )
                 AppFileLogger.traceNow(
                     this@MainActivity,
                     "RENDERER_GONE",
-                    "didCrash=" + detail?.didCrash() +
-                        " priority=" + detail?.rendererPriorityAtExit() +
-                        " url=" + AppFileLogger.safeUrl(view?.url)
+                    rendererGoneMessage("didCrash", detail, view?.url)
                 )
 
                 val crashedView = view ?: return true
@@ -1097,6 +1110,7 @@ class MainActivity : AppCompatActivity() {
             // flows are the common case) has its destination followed in the current tab
             // instead of vanishing into a WebView that is never attached to any screen — that
             // silent drop is what used to look like "the site doesn't redirect after sign-in".
+            @SuppressLint("SetJavaScriptEnabled")
             override fun onCreateWindow(
                 view: WebView?,
                 isDialog: Boolean,
@@ -1137,9 +1151,7 @@ class MainActivity : AppCompatActivity() {
                         AppFileLogger.log(
                             this@MainActivity,
                             "WEBVIEW_RENDER",
-                            "popupRendererGone didCrash=" + detail?.didCrash() +
-                                " priorityAtExit=" + detail?.rendererPriorityAtExit() +
-                                " url=" + AppFileLogger.safeUrl(v?.url)
+                            rendererGoneMessage("popupRendererGone", detail, v?.url)
                         )
                         try {
                             v?.destroy()

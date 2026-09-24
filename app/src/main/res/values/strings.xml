@@ -47,5 +47,7 @@
     <string name="file_chooser_title">اختيار ملف</string>
     <string name="save_image_dialog_title">تحميل الصورة؟</string>
     <string name="save_image_action">تحميل</string>
-    <string name="search_external_browser_required">Please install another browser to search Google.</string>
+    <string name="tab_count_default">1</string>
+    <string name="reload_desc">Reload</string>
+    <string name="close_tab_symbol">×</string>
 </resources>
