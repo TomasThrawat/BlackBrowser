@@ -35,14 +35,22 @@ object AppFileLogger {
     private val writerExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
     @Volatile private var logUri: Uri? = null
     @Volatile private var logOutput: java.io.OutputStream? = null
+    @Volatile private var initializationTraceWritten = false
     @Volatile private var crashHandlerInstalled = false
 
     fun initialize(context: Context) {
         val app = context.applicationContext
+        var shouldTraceInitialization = false
         synchronized(lock) {
             ensureLogOutputLocked(app)
+            if (!initializationTraceWritten && logOutput != null) {
+                initializationTraceWritten = true
+                shouldTraceInitialization = true
+            }
         }
-        traceNow(app, "LOGGER_INITIALIZED", "file=" + (logUri?.toString() ?: "<unavailable>"))
+        if (shouldTraceInitialization) {
+            traceNow(app, "LOGGER_INITIALIZED", "file=" + (logUri?.toString() ?: "<unavailable>"))
+        }
     }
 
     fun installCrashHandler(context: Context) {
