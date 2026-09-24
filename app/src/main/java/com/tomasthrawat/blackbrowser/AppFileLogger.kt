@@ -6,8 +6,6 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.os.ParcelFileDescriptor
-import android.system.Os
-import android.system.OsConstants
 import android.provider.MediaStore
 import android.util.Log
 import java.io.PrintWriter
@@ -20,33 +18,31 @@ import java.util.Locale
  * Persistent diagnostic logger.
  *
  * On Android 10+ the log is written to the public Downloads collection through MediaStore,
- * so no legacy storage permission is required. The file is:
- *   Download/BlackBrowser/BlackBrowser-Diagnostics.log
+ * so no legacy storage permission is required. A new session log is created directly in:
+ *   Download/BlackBrowser-Diagnostics-<timestamp>.log
  *
  * All existing AppFileLogger call sites are retained. "Now" variants write synchronously
  * for crash/error paths; the normal variants write on a small background executor.
  */
 object AppFileLogger {
     private const val TAG = "BlackBrowser"
-    private const val PREFS = "blackbrowser_diagnostics"
-    private const val PREF_LOG_URI = "log_uri"
-    private const val FILE_NAME = "BlackBrowser-Diagnostics.log"
-    private const val RELATIVE_PATH = "Download/BlackBrowser"
+    private const val FILE_PREFIX = "BlackBrowser-Diagnostics-"
+    private const val FILE_SUFFIX = ".log"
+    private const val RELATIVE_PATH = "Download"
     private const val MIME_TYPE = "text/plain"
 
     private val lock = Any()
     private val writerExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
-    @Volatile private var applicationContext: Context? = null
     @Volatile private var logUri: Uri? = null
+    @Volatile private var logOutput: java.io.OutputStream? = null
     @Volatile private var crashHandlerInstalled = false
 
     fun initialize(context: Context) {
         val app = context.applicationContext
-        applicationContext = app
         synchronized(lock) {
-            ensureLogUriLocked(app)
+            ensureLogOutputLocked(app)
         }
-        traceNow(app, "LOGGER_INITIALIZED", "file=Download/BlackBrowser/" + FILE_NAME)
+        traceNow(app, "LOGGER_INITIALIZED", "file=" + (logUri?.toString() ?: "<unavailable>"))
     }
 
     fun installCrashHandler(context: Context) {
@@ -193,18 +189,9 @@ object AppFileLogger {
 
         try {
             synchronized(lock) {
-                val uri = ensureLogUriLocked(context) ?: return
-                if (uri.scheme == "file") {
-                    java.io.FileOutputStream(
-                        java.io.File(uri.path ?: return),
-                        true
-                    ).use { stream ->
-                        stream.write(line.toByteArray(Charsets.UTF_8))
-                        stream.flush()
-                    }
-                } else {
-                    appendToContentUri(context, uri, line)
-                }
+                val output = ensureLogOutputLocked(context) ?: return
+                output.write(line.toByteArray(Charsets.UTF_8))
+                output.flush()
             }
         } catch (t: Throwable) {
             try {
@@ -222,35 +209,29 @@ object AppFileLogger {
         return timestamp + " [" + kind + "][" + tag + "] " + message + "\n"
     }
 
-    private fun ensureLogUriLocked(context: Context): Uri? {
-        logUri?.let { uri ->
-            if (uriStillWritable(context, uri)) return uri
-            logUri = null
-        }
-
-        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        prefs.getString(PREF_LOG_URI, null)?.let { saved ->
-            runCatching { Uri.parse(saved) }.getOrNull()?.let { uri ->
-                if (uriStillWritable(context, uri)) {
-                    logUri = uri
-                    return uri
-                }
-            }
-            prefs.edit().remove(PREF_LOG_URI).apply()
-        }
+    private fun ensureLogOutputLocked(context: Context): java.io.OutputStream? {
+        logOutput?.let { return it }
 
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
             val dir = Environment.getExternalStoragePublicDirectory(
                 Environment.DIRECTORY_DOWNLOADS
             )
-            val folder = java.io.File(dir, "BlackBrowser")
-            if (!folder.exists() && !folder.mkdirs()) return null
-            val file = java.io.File(folder, FILE_NAME)
-            return Uri.fromFile(file).also { logUri = it }
+            if (!dir.exists() && !dir.mkdirs()) return null
+            val stamp = SimpleDateFormat("yyyyMMdd-HHmmss-SSS", Locale.US).format(Date())
+            val file = java.io.File(
+                dir,
+                FILE_PREFIX + stamp + FILE_SUFFIX
+            )
+            val output = java.io.FileOutputStream(file, false)
+            logUri = Uri.fromFile(file)
+            logOutput = output
+            return output
         }
 
+        val stamp = SimpleDateFormat("yyyyMMdd-HHmmss-SSS", Locale.US).format(Date())
+        val fileName = FILE_PREFIX + stamp + FILE_SUFFIX
         val values = ContentValues().apply {
-            put(MediaStore.Downloads.DISPLAY_NAME, FILE_NAME)
+            put(MediaStore.Downloads.DISPLAY_NAME, fileName)
             put(MediaStore.Downloads.MIME_TYPE, MIME_TYPE)
             put(MediaStore.Downloads.RELATIVE_PATH, RELATIVE_PATH)
             put(MediaStore.Downloads.IS_PENDING, 1)
@@ -261,28 +242,19 @@ object AppFileLogger {
             values
         ) ?: return null
 
-        val created = runCatching {
+        try {
+            val descriptor = context.contentResolver.openFileDescriptor(uri, "w")
+                ?: error("openFileDescriptor(w) returned null")
+            val output = ParcelFileDescriptor.AutoCloseOutputStream(descriptor)
             val header = formatLine(
                 "LOGGER",
                 "TRACE",
-                "LOGGER_FILE_CREATED path=Download/BlackBrowser/" + FILE_NAME
+                "LOGGER_FILE_CREATED name=" + fileName + " path=Download/" + fileName
             )
-            context.contentResolver.openFileDescriptor(uri, "w")?.use { descriptor ->
-                ParcelFileDescriptor.AutoCloseOutputStream(descriptor).use { stream ->
-                    stream.write(header.toByteArray(Charsets.UTF_8))
-                    stream.flush()
-                }
-            } ?: error("openFileDescriptor(w) returned null")
-            true
-        }.getOrElse { false }
+            output.write(header.toByteArray(Charsets.UTF_8))
+            output.flush()
 
-        if (!created) {
-            runCatching { context.contentResolver.delete(uri, null, null) }
-            return null
-        }
-
-        val finalized = runCatching {
-            context.contentResolver.update(
+            val finalized = context.contentResolver.update(
                 uri,
                 ContentValues().apply {
                     put(MediaStore.Downloads.IS_PENDING, 0)
@@ -290,37 +262,25 @@ object AppFileLogger {
                 null,
                 null
             )
-        }.getOrDefault(0)
+            if (finalized <= 0) {
+                runCatching { output.close() }
+                runCatching { context.contentResolver.delete(uri, null, null) }
+                return null
+            }
 
-        if (finalized <= 0) {
+            logUri = uri
+            logOutput = output
+            return output
+        } catch (t: Throwable) {
             runCatching { context.contentResolver.delete(uri, null, null) }
+            try {
+                Log.e(TAG, "Unable to create diagnostic log file", t)
+            } catch (_: Throwable) {
+            }
             return null
         }
-
-        prefs.edit().putString(PREF_LOG_URI, uri.toString()).apply()
-        logUri = uri
-        return uri
     }
 
-    private fun appendToContentUri(context: Context, uri: Uri, line: String) {
-        val descriptor = context.contentResolver.openFileDescriptor(uri, "rw")
-            ?: error("openFileDescriptor(rw) returned null")
-        ParcelFileDescriptor.AutoCloseOutputStream(descriptor).use { stream ->
-            Os.lseek(stream.fd, 0L, OsConstants.SEEK_END)
-            stream.write(line.toByteArray(Charsets.UTF_8))
-            stream.flush()
-        }
-    }
+    fun getLogUri(): Uri? = logUri
 
-    private fun uriStillWritable(context: Context, uri: Uri): Boolean {
-        return try {
-            if (uri.scheme == "file") {
-                java.io.File(uri.path ?: return false).exists()
-            } else {
-                context.contentResolver.openFileDescriptor(uri, "rw")?.use { } != null
-            }
-        } catch (_: Throwable) {
-            false
-        }
-    }
 }
