@@ -5,6 +5,7 @@ import android.content.Context
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
+import android.os.ParcelFileDescriptor
 import android.provider.MediaStore
 import android.util.Log
 import java.io.PrintWriter
@@ -200,8 +201,8 @@ object AppFileLogger {
                         stream.flush()
                     }
                 } else {
-                    val output = context.contentResolver.openOutputStream(uri, "wa") ?: return
-                    output.use { stream ->
+                    val descriptor = context.contentResolver.openFileDescriptor(uri, "wa") ?: return
+                    ParcelFileDescriptor.AutoCloseOutputStream(descriptor).use { stream ->
                         stream.write(line.toByteArray(Charsets.UTF_8))
                         stream.flush()
                     }
@@ -288,7 +289,7 @@ object AppFileLogger {
             if (uri.scheme == "file") {
                 java.io.File(uri.path ?: return false).exists()
             } else {
-                context.contentResolver.openOutputStream(uri, "wa")?.use { } != null
+                context.contentResolver.openFileDescriptor(uri, "wa")?.use { } != null
             }
         } catch (_: Throwable) {
             false
