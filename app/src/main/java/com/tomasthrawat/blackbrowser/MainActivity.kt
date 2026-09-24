@@ -498,8 +498,6 @@ class MainActivity : AppCompatActivity() {
         applyUserAgentMetadata(wv)
         applyUserAgentDataOverride(wv)
 
-        wv.setLayerType(View.LAYER_TYPE_HARDWARE, null)
-
         // Keep the app chrome pure-black without forcing WebView pages through an automatic
         // color transformation. Search engines and dynamic pages must render their own CSS.
         if (WebViewFeature.isFeatureSupported(WebViewFeature.ALGORITHMIC_DARKENING)) {
@@ -543,6 +541,7 @@ class MainActivity : AppCompatActivity() {
                 // pass through shouldOverrideUrlLoading and therefore remain available to the user.
                 if (request.isForMainFrame &&
                     request.method.equals("GET", ignoreCase = true) &&
+                    !request.hasGesture() &&
                     view?.let { mainFrameRetryGuardFor(it).shouldSuppress(url.toString()) } == true
                 ) {
                     AppFileLogger.trace(
@@ -800,7 +799,11 @@ class MainActivity : AppCompatActivity() {
 
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
-                if (view == null || !pageFinishGate.shouldProcessPageFinished(view, url)) return
+                if (view == null) return
+                if (url != null) {
+                    mainFrameRetryGuardFor(view).onPageFinished(url)
+                }
+                if (!pageFinishGate.shouldProcessPageFinished(view, url)) return
                 AppFileLogger.log(this@MainActivity, "WEBVIEW", "pageFinished url=" + AppFileLogger.safeUrl(url))
                 AppFileLogger.trace(
                     this@MainActivity,
@@ -939,9 +942,9 @@ class MainActivity : AppCompatActivity() {
                     this@MainActivity,
                     "CONSOLE",
                     "level=" + consoleMessage?.messageLevel() +
-                        " source=" + AppFileLogger.safeString(consoleMessage?.sourceId()) +
+                        " source=" + AppFileLogger.safeUrl(consoleMessage?.sourceId()) +
                         " line=" + consoleMessage?.lineNumber() +
-                        " message=" + AppFileLogger.safeString(consoleMessage?.message())
+                        " message=" + safeConsoleText(consoleMessage?.message())
                 )
                 return super.onConsoleMessage(consoleMessage)
             }
@@ -2190,6 +2193,13 @@ class MainActivity : AppCompatActivity() {
     // so the UA stays truthful about the rendering engine underneath it.
     private fun buildDesktopUserAgent(mobileUa: String): String =
         mobileUa.replace(" Mobile ", " ")
+
+    private fun safeConsoleText(value: String?): String {
+        if (value.isNullOrBlank()) return "<null>"
+        return value.replace(Regex("""https?://[^\s"'<>]+""", RegexOption.IGNORE_CASE)) { match ->
+            AppFileLogger.safeUrl(match.value)
+        }
+    }
 
     private fun computeUserAgent(host: String? = null, forceSpoof: Boolean = false): String {
         val base = baseUserAgent(host, forceSpoof)
