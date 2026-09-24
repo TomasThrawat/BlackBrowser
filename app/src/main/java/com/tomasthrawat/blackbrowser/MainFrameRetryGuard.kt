@@ -1,10 +1,10 @@
 package com.tomasthrawat.blackbrowser
 
 /**
- * Suppresses a tight same-URL main-frame GET loop after a server retry-blocking response.
+ * Suppresses one tight, non-user main-frame GET retry after a server retry-blocking response.
  *
- * App-initiated loadUrl()/reload() calls do not use this class directly; it is consulted only
- * from WebViewClient.shouldOverrideUrlLoading(), so an explicit browser reload remains possible.
+ * A successful page completion clears the pending failure so a transient 429/5xx cannot
+ * keep suppressing a healthy document for the rest of the cooldown window.
  */
 internal class MainFrameRetryGuard(
     private val cooldownMillis: Long = 5_000L,
@@ -21,19 +21,33 @@ internal class MainFrameRetryGuard(
 
     fun onPageStarted(url: String) {
         if (url != failedUrl) {
-            failedUrl = null
-            failedAtMillis = 0L
+            clear()
         }
     }
 
-    fun shouldSuppress(url: String): Boolean {
-        if (url != failedUrl) return false
+    fun onPageFinished(url: String) {
+        if (url == failedUrl) {
+            clear()
+        }
+    }
+
+    fun shouldSuppress(url: String, hasUserGesture: Boolean = false): Boolean {
+        if (hasUserGesture || url != failedUrl) return false
+
         val age = nowMillis() - failedAtMillis
         if (age < 0L || age > cooldownMillis) {
-            failedUrl = null
-            failedAtMillis = 0L
+            clear()
             return false
         }
+
+        // Suppress at most one automatic retry for each observed 429/5xx.
+        // A later retry can only be suppressed after a new server error is observed.
+        clear()
         return true
+    }
+
+    private fun clear() {
+        failedUrl = null
+        failedAtMillis = 0L
     }
 }
