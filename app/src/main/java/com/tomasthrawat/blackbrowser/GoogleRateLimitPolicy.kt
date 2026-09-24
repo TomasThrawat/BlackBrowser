@@ -13,9 +13,7 @@ internal object GoogleRateLimitPolicy {
             val isGoogleHost =
                 host == "google.com" ||
                     host == "www.google.com" ||
-                    host.endsWith(".google.com") ||
-                    host.startsWith("google.") ||
-                    host.startsWith("www.google.")
+                    host.endsWith(".google.com")
             isGoogleHost && (path == "/sorry" || path.startsWith("/sorry/"))
         }.getOrDefault(false)
     }

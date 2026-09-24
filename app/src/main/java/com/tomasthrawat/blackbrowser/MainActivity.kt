@@ -763,9 +763,9 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
 
-                val isGoogleRateLimit = request != null &&
-                    isMainFrameGet &&
-                    GoogleRateLimitPolicy.isGoogleRateLimit(request.url.toString(), statusCode)
+                val googleRateLimitedUrl = request?.url?.toString()
+                    ?.takeIf { isMainFrameGet }
+                    ?.takeIf { GoogleRateLimitPolicy.isGoogleRateLimit(it, statusCode) }
 
                 AppFileLogger.trace(
                     this@MainActivity,
@@ -777,11 +777,11 @@ class MainActivity : AppCompatActivity() {
                         " url=" + AppFileLogger.safeUrl(request?.url?.toString())
                 )
 
-                if (isGoogleRateLimit && view != null && request != null) {
+                if (googleRateLimitedUrl != null && view != null) {
                     AppFileLogger.trace(
                         this@MainActivity,
                         "GOOGLE_RATE_LIMIT_FALLBACK",
-                        "status=429 url=" + AppFileLogger.safeUrl(request.url.toString())
+                        "status=429 url=" + AppFileLogger.safeUrl(googleRateLimitedUrl)
                     )
                     showGoogleRateLimitFallback(view)
                 }
