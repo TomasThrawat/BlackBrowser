@@ -1117,9 +1117,12 @@ class MainActivity : AppCompatActivity() {
                 // process-wide, so forcing it to true here would re-enable cookies even when
                 // the popup was opened from an incognito tab.
                 val openerIsIncognito = tabs.firstOrNull { it.webView === view }?.isIncognito == true
-                val popupCookieManager = CookieManager.getInstance()
-                popupCookieManager.setAcceptCookie(!openerIsIncognito)
-                popupCookieManager.setAcceptThirdPartyCookies(popup, !openerIsIncognito)
+                // setAcceptCookie() is process-wide. Do not toggle it here because opening
+                // a popup from one tab can otherwise change first-party cookie behavior for
+                // every other tab that is already running. The active opener has already set
+                // the process policy in switchToTab(); only the popup's per-WebView
+                // third-party policy needs to be set here.
+                CookieManager.getInstance().setAcceptThirdPartyCookies(popup, !openerIsIncognito)
                 popup.settings.userAgentString = computeUserAgent(
                     runCatching { Uri.parse(view?.url).host }.getOrNull()
                 )
