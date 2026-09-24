@@ -52,6 +52,7 @@ import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
+import androidx.browser.customtabs.CustomTabsIntent
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -383,6 +384,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         AppFileLogger.trace(this, "ACTIVITY_RESUME", "tab=" + currentTabIndex)
+        googleAuthHandoffInProgress = false
         super.onResume()
         tabs.getOrNull(currentTabIndex)?.webView?.onResume()
         updateDefaultBrowserButtonVisibility()
@@ -535,6 +537,18 @@ class MainActivity : AppCompatActivity() {
                 request: WebResourceRequest?
             ): Boolean {
                 val url = request?.url ?: return false
+
+                if (request.isForMainFrame && isGoogleAuthenticationUrl(url)) {
+                    AppFileLogger.logNow(
+                        this@MainActivity,
+                        "GOOGLE_AUTH",
+                        "handoff Google authentication to Custom Tab url=" +
+                            AppFileLogger.safeUrl(url.toString())
+                    )
+                    if (openGoogleAuthentication(url, view)) {
+                        return true
+                    }
+                }
 
                 if (isGithubArtifactUiDownloadUrl(url)) {
                     AppFileLogger.logNow(
@@ -840,6 +854,11 @@ class MainActivity : AppCompatActivity() {
             }
 
             override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
+                if (view != null && url != null && isGoogleAuthenticationUrl(Uri.parse(url))) {
+                    if (openGoogleAuthentication(Uri.parse(url), view)) {
+                        return
+                    }
+                }
                 AppFileLogger.log(this@MainActivity, "WEBVIEW", "pageStarted url=" + AppFileLogger.safeUrl(url))
                 AppFileLogger.trace(
                     this@MainActivity,
@@ -1165,6 +1184,18 @@ class MainActivity : AppCompatActivity() {
                         request: WebResourceRequest?
                     ): Boolean {
                         val destUrl = request?.url ?: run { popup.destroy(); return true }
+
+                        if (isGoogleAuthenticationUrl(destUrl)) {
+                            AppFileLogger.logNow(
+                                this@MainActivity,
+                                "GOOGLE_AUTH",
+                                "handoff popup Google authentication to Custom Tab url=" +
+                                    AppFileLogger.safeUrl(destUrl.toString())
+                            )
+                            popup.destroy()
+                            openGoogleAuthentication(destUrl, null)
+                            return true
+                        }
 
                         if (isGithubArtifactUiDownloadUrl(destUrl)) {
                             AppFileLogger.logNow(
@@ -2393,6 +2424,53 @@ class MainActivity : AppCompatActivity() {
 
     private fun isLocalRateLimitFallbackUrl(url: String): Boolean {
         return url == "https://blackbrowser.invalid/rate-limit-fallback"
+    }
+
+    private var googleAuthHandoffInProgress = false
+
+    private fun isGoogleAuthenticationUrl(uri: Uri): Boolean {
+        val host = uri.host?.lowercase() ?: return false
+        if (host != "accounts.google.com") return false
+
+        val path = uri.path?.lowercase() ?: ""
+        return path.startsWith("/signin") ||
+            path.startsWith("/servicelogin") ||
+            path.startsWith("/v3/signin") ||
+            path.startsWith("/o/oauth")
+    }
+
+    private fun openGoogleAuthentication(uri: Uri, webView: WebView?): Boolean {
+        if (!isGoogleAuthenticationUrl(uri)) return false
+        if (googleAuthHandoffInProgress) {
+            webView?.stopLoading()
+            return true
+        }
+
+        googleAuthHandoffInProgress = true
+        webView?.stopLoading()
+        return try {
+            CustomTabsIntent.Builder()
+                .setShowTitle(true)
+                .build()
+                .launchUrl(this, uri)
+            true
+        } catch (e: ActivityNotFoundException) {
+            googleAuthHandoffInProgress = false
+            try {
+                startActivity(Intent(Intent.ACTION_VIEW, uri))
+                true
+            } catch (_: ActivityNotFoundException) {
+                Toast.makeText(
+                    this,
+                    "No supported browser is installed for Google sign-in.",
+                    Toast.LENGTH_LONG
+                ).show()
+                false
+            }
+        } catch (_: Exception) {
+            googleAuthHandoffInProgress = false
+            false
+        }
     }
 
     private fun isGoogleSettingsUrl(uri: Uri): Boolean {
