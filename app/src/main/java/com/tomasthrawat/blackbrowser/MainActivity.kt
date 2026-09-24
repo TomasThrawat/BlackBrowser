@@ -744,22 +744,29 @@ class MainActivity : AppCompatActivity() {
                 request: WebResourceRequest?,
                 error: WebResourceError?
             ) {
-                AppFileLogger.log(
-                    this@MainActivity,
-                    "WEBVIEW_ERROR",
-                    "mainFrame=" + request?.isForMainFrame +
-                        " url=" + AppFileLogger.safeUrl(request?.url?.toString()) +
-                        " code=" + error?.errorCode +
-                        " description=" + error?.description
-                )
-                AppFileLogger.trace(
-                    this@MainActivity,
-                    "RESOURCE_ERROR",
-                    "mainFrame=" + request?.isForMainFrame +
-                        " code=" + error?.errorCode +
-                        " description=" + AppFileLogger.safeString(error?.description?.toString()) +
-                        " url=" + AppFileLogger.safeUrl(request?.url?.toString())
-                )
+                val shouldLogError = request?.isForMainFrame == true ||
+                    WebViewErrorPolicy.shouldLogNonMainFrameError(
+                        request?.url?.host,
+                        request?.url?.path
+                    )
+                if (shouldLogError) {
+                    AppFileLogger.log(
+                        this@MainActivity,
+                        "WEBVIEW_ERROR",
+                        "mainFrame=" + request?.isForMainFrame +
+                            " url=" + AppFileLogger.safeUrl(request?.url?.toString()) +
+                            " code=" + error?.errorCode +
+                            " description=" + error?.description
+                    )
+                    AppFileLogger.trace(
+                        this@MainActivity,
+                        "RESOURCE_ERROR",
+                        "mainFrame=" + request?.isForMainFrame +
+                            " code=" + error?.errorCode +
+                            " description=" + AppFileLogger.safeString(error?.description?.toString()) +
+                            " url=" + AppFileLogger.safeUrl(request?.url?.toString())
+                    )
+                }
                 super.onReceivedError(view, request, error)
                 if (request?.isForMainFrame == true && view != null &&
                     inFlightAppNavigationUrls[view] == request.url.toString()
@@ -1106,11 +1113,18 @@ class MainActivity : AppCompatActivity() {
                 val popup = WebView(this@MainActivity)
                 popup.settings.javaScriptEnabled = true
                 popup.settings.domStorageEnabled = true
-                // Keep popup challenge/login flows on the same cookie-capable session policy.
+                // Match the opener tab's cookie policy. CookieManager.setAcceptCookie() is
+                // process-wide, so forcing it to true here would re-enable cookies even when
+                // the popup was opened from an incognito tab.
+                val openerIsIncognito = tabs.firstOrNull { it.webView === view }?.isIncognito == true
                 val popupCookieManager = CookieManager.getInstance()
-                popupCookieManager.setAcceptCookie(true)
-                popupCookieManager.setAcceptThirdPartyCookies(popup, true)
-                popup.settings.userAgentString = WebSettings.getDefaultUserAgent(this@MainActivity)
+                popupCookieManager.setAcceptCookie(!openerIsIncognito)
+                popupCookieManager.setAcceptThirdPartyCookies(popup, !openerIsIncognito)
+                popup.settings.userAgentString = computeUserAgent(
+                    runCatching { Uri.parse(view?.url).host }.getOrNull()
+                )
+                applyUserAgentMetadata(popup)
+                applyUserAgentDataOverride(popup)
                 attachDownloadListener(popup)
                 popup.webViewClient = object : WebViewClient() {
                     override fun onRenderProcessGone(
