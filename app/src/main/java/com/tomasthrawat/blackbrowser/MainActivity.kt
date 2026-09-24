@@ -543,7 +543,7 @@ class MainActivity : AppCompatActivity() {
                 // pass through shouldOverrideUrlLoading and therefore remain available to the user.
                 if (request.isForMainFrame &&
                     request.method.equals("GET", ignoreCase = true) &&
-                    mainFrameRetryGuard.shouldSuppress(url)
+                    mainFrameRetryGuard.shouldSuppress(url.toString())
                 ) {
                     AppFileLogger.trace(
                         this@MainActivity,

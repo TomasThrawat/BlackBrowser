@@ -1,6 +1,5 @@
 package com.tomasthrawat.blackbrowser
 
-import android.net.Uri
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -9,9 +8,9 @@ class MainFrameRetryGuardTest {
     @Test fun sameUrlIsSuppressedAfterFiveHundredSeriesError() {
         var now = 1_000L
         val guard = MainFrameRetryGuard(cooldownMillis = 5_000L) { now }
-        val url = Uri.parse("https://example.com/page")
+        val url = "https://example.com/page"
 
-        guard.record5xx(url.toString())
+        guard.record5xx(url)
         assertTrue(guard.shouldSuppress(url))
 
         now += 4_999L
@@ -24,13 +23,13 @@ class MainFrameRetryGuardTest {
     @Test fun differentUrlIsNeverSuppressed() {
         val guard = MainFrameRetryGuard { 1_000L }
         guard.record5xx("https://example.com/page-a")
-        assertFalse(guard.shouldSuppress(Uri.parse("https://example.com/page-b")))
+        assertFalse(guard.shouldSuppress("https://example.com/page-b"))
     }
 
     @Test fun aDifferentPageStartClearsTheSuppression() {
         val guard = MainFrameRetryGuard { 1_000L }
-        val failed = Uri.parse("https://example.com/page-a")
-        guard.record5xx(failed.toString())
+        val failed = "https://example.com/page-a"
+        guard.record5xx(failed)
         guard.onPageStarted("https://example.com/page-b")
         assertFalse(guard.shouldSuppress(failed))
     }

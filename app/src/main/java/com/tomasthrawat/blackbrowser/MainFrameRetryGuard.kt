@@ -26,8 +26,8 @@ internal class MainFrameRetryGuard(
         }
     }
 
-    fun shouldSuppress(url: android.net.Uri): Boolean {
-        if (url.toString() != failedUrl) return false
+    fun shouldSuppress(url: String): Boolean {
+        if (url != failedUrl) return false
         val age = nowMillis() - failedAtMillis
         if (age < 0L || age > cooldownMillis) {
             failedUrl = null
