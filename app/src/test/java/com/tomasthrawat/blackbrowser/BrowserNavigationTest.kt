@@ -32,6 +32,25 @@ class BrowserNavigationTest {
         )
     }
 
+    @Test fun equivalentGoogleSearchUrls_ignoreTransientParameters() {
+        val base = "https://www.google.com/search?q=pubg"
+        val generated = "https://www.google.com/search?q=pubg&sca_esv=abc&sxsrf=xyz&ei=123&biw=360&bih=712&oq=pubg&gs_lp=abc&sclient=mobile-gws-wiz-hp&sei=456"
+        assertTrue(BrowserNavigation.areEquivalentGoogleSearchUrls(base, generated))
+    }
+
+    @Test fun equivalentGoogleSearchUrls_keepSearchModeParameters() {
+        val web = "https://www.google.com/search?q=cats"
+        val images = "https://www.google.com/search?q=cats&tbm=isch"
+        assertTrue(!BrowserNavigation.areEquivalentGoogleSearchUrls(web, images))
+    }
+
+    @Test fun equivalentGoogleSearchUrls_ignoreNonGoogleUrls() {
+        assertTrue(!BrowserNavigation.areEquivalentGoogleSearchUrls(
+            "https://example.com/search?q=cats",
+            "https://example.com/search?q=cats&ei=123"
+        ))
+    }
+
     @Test fun googleSearchUrl_buildsStandardQueryUrl() {
         assertEquals(
             "https://www.google.com/search?q=hello%20world",

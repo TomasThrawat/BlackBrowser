@@ -539,11 +539,28 @@ class MainActivity : AppCompatActivity() {
                 // A small subset of servers responds to an already-rendered page with a 5xx,
                 // while the page/client immediately asks WebView for the exact same GET again.
                 // That creates a tight navigation/reload loop. Suppress only that exact main-frame
-                // GET for a short cooldown after a 5xx; app-initiated loadUrl/reload calls do not
+                // GET for a short cooldown after a 429/5xx; app-initiated loadUrl/reload calls do not
                 // pass through shouldOverrideUrlLoading and therefore remain available to the user.
+                val currentUrl = view?.url
                 if (request.isForMainFrame &&
                     request.method.equals("GET", ignoreCase = true) &&
-                    mainFrameRetryGuard.shouldSuppress(url.toString())
+                    currentUrl != null &&
+                    currentUrl != url.toString() &&
+                    BrowserNavigation.areEquivalentGoogleSearchUrls(currentUrl, url.toString())
+                ) {
+                    AppFileLogger.trace(
+                        this@MainActivity,
+                        "NAV_SUPPRESS_DUPLICATE_SEARCH",
+                        "mainFrame=true method=GET current=" +
+                            AppFileLogger.safeUrl(currentUrl) +
+                            " requested=" + AppFileLogger.safeUrl(url.toString())
+                    )
+                    return true
+                }
+
+                if (request.isForMainFrame &&
+                    request.method.equals("GET", ignoreCase = true) &&
+                    view?.let { mainFrameRetryGuardFor(it).shouldSuppress(url.toString()) } == true
                 ) {
                     AppFileLogger.trace(
                         this@MainActivity,
@@ -565,9 +582,9 @@ class MainActivity : AppCompatActivity() {
                         " ua=" + AppFileLogger.safeString(view?.settings?.userAgentString)
                 )
 
-                // Google Search submits a dynamic URL with many transient parameters. Normalize
-                // main-frame search navigations before WebView starts the request so the browser
-                // keeps one stable, compact search URL instead of replaying that generated URL.
+                // Google Search can turn one user search into a second main-frame GET carrying
+                // transient telemetry/state parameters. Equivalent search URLs are suppressed
+                // above so that WebView does not send the same search to the network twice.
                 // Same-tab OAuth/2FA redirect chains (Google/Apple/Microsoft/etc. sign-in
                 // callbacks) must never be silently killed by the ad-block host list -- only
                 // the popup path (onCreateWindow) used to be exempted via
@@ -758,9 +775,11 @@ class MainActivity : AppCompatActivity() {
                 val statusCode = errorResponse?.statusCode ?: -1
                 if (request?.isForMainFrame == true &&
                     request.method.equals("GET", ignoreCase = true) &&
-                    statusCode in 500..599
+                    (statusCode == 429 || statusCode in 500..599)
                 ) {
-                    mainFrameRetryGuard.record5xx(request.url.toString())
+                    view?.let {
+                        mainFrameRetryGuardFor(it).recordServerRetryBlock(request.url.toString())
+                    }
                 }
                 AppFileLogger.trace(
                     this@MainActivity,
@@ -785,7 +804,7 @@ class MainActivity : AppCompatActivity() {
                 )
                 if (view != null && url != null) {
                     pageFinishGate.onPageStarted(view, url)
-                    mainFrameRetryGuard.onPageStarted(url)
+                    mainFrameRetryGuardFor(view).onPageStarted(url)
                 }
                 super.onPageStarted(view, url, favicon)
                 // Once Chromium has actually started the main-frame navigation, the original
@@ -804,7 +823,7 @@ class MainActivity : AppCompatActivity() {
                     this@MainActivity,
                     "PAGE_FINISHED",
                     "url=" + AppFileLogger.safeUrl(url) +
-                        " title=" + AppFileLogger.safeString(view.title) +
+                        " title=" + AppFileLogger.safeTitle(view.title) +
                         " ua=" + AppFileLogger.safeString(view.settings.userAgentString) +
                         " cookies=" + CookieManager.getInstance().hasCookies()
                 )
@@ -2204,7 +2223,10 @@ class MainActivity : AppCompatActivity() {
     // subresources, or a deliberate new navigation after the current one finishes.
     private val inFlightAppNavigationUrls = java.util.WeakHashMap<WebView, String>()
     private val pageFinishGate = PageFinishGate<WebView>()
-    private val mainFrameRetryGuard = MainFrameRetryGuard()
+    private val mainFrameRetryGuards = java.util.WeakHashMap<WebView, MainFrameRetryGuard>()
+
+    private fun mainFrameRetryGuardFor(webView: WebView): MainFrameRetryGuard =
+        mainFrameRetryGuards.getOrPut(webView) { MainFrameRetryGuard() }
 
     private fun isGoogleSettingsUrl(uri: Uri): Boolean {
         val host = uri.host?.lowercase() ?: return false

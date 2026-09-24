@@ -110,6 +110,23 @@ object AppFileLogger {
     fun safeString(value: String?): String =
         value?.replace("\n", "\\n")?.replace("\r", "\\r") ?: "<null>"
 
+    /**
+     * Logs ordinary titles as-is, but routes URL-shaped titles through the
+     * same query redaction used for URLs.
+     */
+    fun safeTitle(value: String?): String {
+        if (value.isNullOrBlank()) return "<null>"
+        val trimmed = value.trim()
+        return if (
+            trimmed.startsWith("http://", ignoreCase = true) ||
+            trimmed.startsWith("https://", ignoreCase = true)
+        ) {
+            safeUrl(trimmed)
+        } else {
+            safeString(trimmed)
+        }
+    }
+
     fun safeUrl(value: String?): String {
         if (value.isNullOrBlank()) return "<null>"
         return try {
@@ -122,15 +139,39 @@ object AppFileLogger {
             val redacted = mutableListOf<Pair<String, String>>()
             for (name in uri.queryParameterNames) {
                 val lower = name.lowercase(Locale.US)
-                val sensitive = lower.contains("token") ||
-                    lower.contains("secret") ||
-                    lower.contains("password") ||
-                    lower == "code" ||
-                    lower.contains("auth") ||
-                    lower.contains("signature") ||
-                    lower == "sig" ||
-                    lower.startsWith("x-amz-")
-                redacted.add(
+                val sensitive = lower == "q" ||
+                lower == "query" ||
+                lower == "search" ||
+                lower == "search_query" ||
+                lower == "text" ||
+                lower == "prompt" ||
+                lower == "continue" ||
+                lower == "redirect" ||
+                lower == "redirect_uri" ||
+                lower == "return" ||
+                lower == "return_url" ||
+                lower == "next" ||
+                lower == "target" ||
+                lower == "dest" ||
+                lower == "destination" ||
+                lower == "s" ||
+                lower == "state" ||
+                lower == "nonce" ||
+                lower == "sg_ss" ||
+                lower == "sxsrf" ||
+                lower == "ei" ||
+                lower == "sei" ||
+                lower == "oq" ||
+                lower == "gs_lp" ||
+                lower.contains("token") ||
+                lower.contains("secret") ||
+                lower.contains("password") ||
+                lower == "code" ||
+                lower.contains("auth") ||
+                lower.contains("signature") ||
+                lower == "sig" ||
+                lower.startsWith("x-amz-")
+            redacted.add(
                     name to if (sensitive) "<redacted>" else (uri.getQueryParameter(name) ?: "")
                 )
             }

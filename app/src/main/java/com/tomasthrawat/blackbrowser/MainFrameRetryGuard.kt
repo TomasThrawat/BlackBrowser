@@ -1,7 +1,7 @@
 package com.tomasthrawat.blackbrowser
 
 /**
- * Suppresses a tight same-URL main-frame GET loop after a server-side 5xx response.
+ * Suppresses a tight same-URL main-frame GET loop after a server retry-blocking response.
  *
  * App-initiated loadUrl()/reload() calls do not use this class directly; it is consulted only
  * from WebViewClient.shouldOverrideUrlLoading(), so an explicit browser reload remains possible.
@@ -13,7 +13,7 @@ internal class MainFrameRetryGuard(
     private var failedUrl: String? = null
     private var failedAtMillis: Long = 0L
 
-    fun record5xx(url: String) {
+    fun recordServerRetryBlock(url: String) {
         if (url.isBlank()) return
         failedUrl = url
         failedAtMillis = nowMillis()
