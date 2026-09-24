@@ -36,13 +36,13 @@ jobs:
           cache-read-only: true
 
       - name: Run unit tests
-        run: gradle testDebugUnitTest --stacktrace
+        run: gradle testDebugUnitTest --stacktrace --warning-mode all
 
       - name: Run Android lint
-        run: gradle lintDebug --stacktrace
+        run: gradle lintDebug --stacktrace --warning-mode all
 
       - name: Build debug APK
-        run: gradle assembleDebug --stacktrace
+        run: gradle assembleDebug --stacktrace --warning-mode all
 
       - name: Verify APK metadata and signature
         shell: bash
