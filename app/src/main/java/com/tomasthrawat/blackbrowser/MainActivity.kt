@@ -755,14 +755,18 @@ class MainActivity : AppCompatActivity() {
                 errorResponse: WebResourceResponse?
             ) {
                 val statusCode = errorResponse?.statusCode ?: -1
-                if (request?.isForMainFrame == true &&
-                    request.method.equals("GET", ignoreCase = true) &&
-                    (statusCode == 429 || statusCode in 500..599)
-                ) {
+                val isMainFrameGet = request?.isForMainFrame == true &&
+                    request.method.equals("GET", ignoreCase = true)
+                if (isMainFrameGet && (statusCode == 429 || statusCode in 500..599)) {
                     view?.let {
                         mainFrameRetryGuardFor(it).recordServerRetryBlock(request.url.toString())
                     }
                 }
+
+                val isGoogleRateLimit = request != null &&
+                    isMainFrameGet &&
+                    GoogleRateLimitPolicy.isGoogleRateLimit(request.url.toString(), statusCode)
+
                 AppFileLogger.trace(
                     this@MainActivity,
                     "HTTP_ERROR",
@@ -772,6 +776,16 @@ class MainActivity : AppCompatActivity() {
                         " mime=" + AppFileLogger.safeString(errorResponse?.mimeType) +
                         " url=" + AppFileLogger.safeUrl(request?.url?.toString())
                 )
+
+                if (isGoogleRateLimit && view != null && request != null) {
+                    AppFileLogger.trace(
+                        this@MainActivity,
+                        "GOOGLE_RATE_LIMIT_FALLBACK",
+                        "status=429 url=" + AppFileLogger.safeUrl(request.url.toString())
+                    )
+                    showGoogleRateLimitFallback(view)
+                }
+
                 super.onReceivedHttpError(view, request, errorResponse)
             }
 
@@ -844,6 +858,84 @@ class MainActivity : AppCompatActivity() {
 
                 if (AdBlockPrefs.isEnabled(this@MainActivity)) {
                     injectCosmeticCss(view)
+                }
+            }
+
+            private fun showGoogleRateLimitFallback(view: WebView) {
+                runCatching { view.stopLoading() }
+                val html = """
+                    <!doctype html>
+                    <html lang="ar">
+                    <head>
+                      <meta name="viewport" content="width=device-width,initial-scale=1">
+                      <meta name="color-scheme" content="dark">
+                      <title>Google مؤقتًا غير متاح</title>
+                      <style>
+                        :root { color-scheme: dark; }
+                        html, body {
+                          margin: 0;
+                          padding: 0;
+                          min-height: 100%;
+                          background: #000;
+                          color: #fff;
+                          font-family: sans-serif;
+                        }
+                        body {
+                          display: flex;
+                          align-items: center;
+                          justify-content: center;
+                          min-height: 100vh;
+                        }
+                        main {
+                          width: min(88vw, 520px);
+                          box-sizing: border-box;
+                          padding: 28px 24px;
+                          text-align: center;
+                        }
+                        h1 {
+                          margin: 0 0 12px;
+                          font-size: 22px;
+                        }
+                        p {
+                          margin: 0 0 20px;
+                          color: #bdbdbd;
+                          line-height: 1.6;
+                        }
+                        button {
+                          border: 0;
+                          border-radius: 12px;
+                          padding: 12px 18px;
+                          background: #fff;
+                          color: #000;
+                          font-size: 15px;
+                        }
+                      </style>
+                    </head>
+                    <body>
+                      <main>
+                        <h1>Google أوقف الطلب مؤقتًا</h1>
+                        <p>تم الوصول إلى حد مؤقت لطلبات البحث. لن يعيد BlackBrowser إرسال الطلب تلقائيًا حتى لا يدخل في حلقة تكرار.</p>
+                        <button type="button" onclick="history.back()">الرجوع للصفحة السابقة</button>
+                      </main>
+                    </body>
+                    </html>
+                """.trimIndent()
+
+                runCatching {
+                    view.loadDataWithBaseURL(
+                        "https://www.google.com/",
+                        html,
+                        "text/html",
+                        "UTF-8",
+                        "https://www.google.com/"
+                    )
+                }.onFailure { throwable ->
+                    AppFileLogger.logExceptionNow(
+                        this@MainActivity,
+                        "WEBVIEW_RATE_LIMIT",
+                        "failed to render Google rate-limit fallback",
+                        throwable
+                    )
                 }
             }
 
