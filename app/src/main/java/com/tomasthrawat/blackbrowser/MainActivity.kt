@@ -500,10 +500,10 @@ class MainActivity : AppCompatActivity() {
 
         wv.setLayerType(View.LAYER_TYPE_HARDWARE, null)
 
-        // Pure-black rendering for every site, by default, when the installed WebView build
-        // supports it (androidx.webkit feature-detected — never assumed).
+        // Keep the app chrome pure-black without forcing WebView pages through an automatic
+        // color transformation. Search engines and dynamic pages must render their own CSS.
         if (WebViewFeature.isFeatureSupported(WebViewFeature.ALGORITHMIC_DARKENING)) {
-            WebSettingsCompat.setAlgorithmicDarkeningAllowed(wv.settings, true)
+            WebSettingsCompat.setAlgorithmicDarkeningAllowed(wv.settings, false)
         }
 
         // Third-party cookies are off by default per-WebView; most cross-domain sign-in
@@ -541,23 +541,6 @@ class MainActivity : AppCompatActivity() {
                 // That creates a tight navigation/reload loop. Suppress only that exact main-frame
                 // GET for a short cooldown after a 429/5xx; app-initiated loadUrl/reload calls do not
                 // pass through shouldOverrideUrlLoading and therefore remain available to the user.
-                val currentUrl = view?.url
-                if (request.isForMainFrame &&
-                    request.method.equals("GET", ignoreCase = true) &&
-                    currentUrl != null &&
-                    currentUrl != url.toString() &&
-                    BrowserNavigation.areEquivalentGoogleSearchUrls(currentUrl, url.toString())
-                ) {
-                    AppFileLogger.trace(
-                        this@MainActivity,
-                        "NAV_SUPPRESS_DUPLICATE_SEARCH",
-                        "mainFrame=true method=GET current=" +
-                            AppFileLogger.safeUrl(currentUrl) +
-                            " requested=" + AppFileLogger.safeUrl(url.toString())
-                    )
-                    return true
-                }
-
                 if (request.isForMainFrame &&
                     request.method.equals("GET", ignoreCase = true) &&
                     view?.let { mainFrameRetryGuardFor(it).shouldSuppress(url.toString()) } == true
@@ -582,9 +565,9 @@ class MainActivity : AppCompatActivity() {
                         " ua=" + AppFileLogger.safeString(view?.settings?.userAgentString)
                 )
 
-                // Google Search can turn one user search into a second main-frame GET carrying
-                // transient telemetry/state parameters. Equivalent search URLs are suppressed
-                // above so that WebView does not send the same search to the network twice.
+                // Google Search may issue more than one main-frame GET while constructing the
+                // results document. Let WebView/Google own that navigation; only server-confirmed
+                // 429/5xx responses activate the retry guard below.
                 // Same-tab OAuth/2FA redirect chains (Google/Apple/Microsoft/etc. sign-in
                 // callbacks) must never be silently killed by the ad-block host list -- only
                 // the popup path (onCreateWindow) used to be exempted via
