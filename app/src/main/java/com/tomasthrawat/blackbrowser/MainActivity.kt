@@ -564,6 +564,25 @@ class MainActivity : AppCompatActivity() {
                         " ua=" + AppFileLogger.safeString(view?.settings?.userAgentString)
                 )
 
+                if (request.isForMainFrame && request.hasGesture()) {
+                    view?.let { activeGoogleRateLimitFallbackUrls.remove(it) }
+                }
+
+                if (request.isForMainFrame &&
+                    !request.hasGesture() &&
+                    view != null &&
+                    isGoogleSorryUrl(url.toString()) &&
+                    activeGoogleRateLimitFallbackUrls.containsKey(view)
+                ) {
+                    AppFileLogger.trace(
+                        this@MainActivity,
+                        "NAV_SUPPRESS_RATE_LIMIT",
+                        "mainFrame=true method=" + AppFileLogger.safeString(request.method) +
+                            " url=" + AppFileLogger.safeUrl(url.toString())
+                    )
+                    return true
+                }
+
                 // Google Search may issue more than one main-frame GET while constructing the
                 // results document. Let WebView/Google own that navigation; only server-confirmed
                 // 429/5xx responses activate the retry guard below.
@@ -778,12 +797,23 @@ class MainActivity : AppCompatActivity() {
                 )
 
                 if (googleRateLimitedUrl != null && view != null) {
-                    AppFileLogger.trace(
-                        this@MainActivity,
-                        "GOOGLE_RATE_LIMIT_FALLBACK",
-                        "status=429 url=" + AppFileLogger.safeUrl(googleRateLimitedUrl)
-                    )
-                    showGoogleRateLimitFallback(view)
+                    val alreadyShowingFallback =
+                        activeGoogleRateLimitFallbackUrls[view] == googleRateLimitedUrl
+                    activeGoogleRateLimitFallbackUrls[view] = googleRateLimitedUrl
+                    if (!alreadyShowingFallback) {
+                        AppFileLogger.trace(
+                            this@MainActivity,
+                            "GOOGLE_RATE_LIMIT_FALLBACK",
+                            "status=429 url=" + AppFileLogger.safeUrl(googleRateLimitedUrl)
+                        )
+                        showGoogleRateLimitFallback(view)
+                    } else {
+                        AppFileLogger.trace(
+                            this@MainActivity,
+                            "GOOGLE_RATE_LIMIT_FALLBACK_DUPLICATE",
+                            "status=429 url=" + AppFileLogger.safeUrl(googleRateLimitedUrl)
+                        )
+                    }
                 }
 
                 super.onReceivedHttpError(view, request, errorResponse)
@@ -799,6 +829,20 @@ class MainActivity : AppCompatActivity() {
                         " cache=" + view?.settings?.cacheMode
                 )
                 if (view != null && url != null) {
+                    val rateLimitFallbackUrl = activeGoogleRateLimitFallbackUrls[view]
+                    if (rateLimitFallbackUrl != null && isGoogleSorryUrl(url)) {
+                        AppFileLogger.trace(
+                            this@MainActivity,
+                            "PAGE_RATE_LIMIT_REDIRECT_SUPPRESSED",
+                            "url=" + AppFileLogger.safeUrl(url) +
+                                " fallbackFor=" + AppFileLogger.safeUrl(rateLimitFallbackUrl)
+                        )
+                        showGoogleRateLimitFallback(view)
+                        return
+                    }
+                    if (!isLocalRateLimitFallbackUrl(url) && !isGoogleSorryUrl(url)) {
+                        activeGoogleRateLimitFallbackUrls.remove(view)
+                    }
                     pageFinishGate.onPageStarted(view, url)
                     mainFrameRetryGuardFor(view).onPageStarted(url)
                 }
@@ -923,11 +967,11 @@ class MainActivity : AppCompatActivity() {
 
                 runCatching {
                     view.loadDataWithBaseURL(
-                        "https://www.google.com/",
+                        "https://blackbrowser.invalid/rate-limit-fallback",
                         html,
                         "text/html",
                         "UTF-8",
-                        "https://www.google.com/"
+                        "https://blackbrowser.invalid/rate-limit-fallback"
                     )
                 }.onFailure { throwable ->
                     AppFileLogger.logExceptionNow(
@@ -2309,9 +2353,18 @@ class MainActivity : AppCompatActivity() {
     private val inFlightAppNavigationUrls = java.util.WeakHashMap<WebView, String>()
     private val pageFinishGate = PageFinishGate<WebView>()
     private val mainFrameRetryGuards = java.util.WeakHashMap<WebView, MainFrameRetryGuard>()
+    private val activeGoogleRateLimitFallbackUrls = java.util.WeakHashMap<WebView, String>()
 
     private fun mainFrameRetryGuardFor(webView: WebView): MainFrameRetryGuard =
         mainFrameRetryGuards.getOrPut(webView) { MainFrameRetryGuard() }
+
+    private fun isGoogleSorryUrl(url: String): Boolean {
+        return runCatching { GoogleRateLimitPolicy.isGoogleRateLimit(url, 429) }.getOrDefault(false)
+    }
+
+    private fun isLocalRateLimitFallbackUrl(url: String): Boolean {
+        return url == "https://blackbrowser.invalid/rate-limit-fallback"
+    }
 
     private fun isGoogleSettingsUrl(uri: Uri): Boolean {
         val host = uri.host?.lowercase() ?: return false
