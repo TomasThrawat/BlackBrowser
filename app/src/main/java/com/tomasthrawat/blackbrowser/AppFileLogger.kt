@@ -99,14 +99,12 @@ object AppFileLogger {
             context,
             tag,
             "EXCEPTION",
-            message + "
-" + stack
+            message + "\n" + stack
         )
     }
 
     fun safeString(value: String?): String =
-        value?.replace("
-", "\n")?.replace("", "\r") ?: "<null>"
+        value?.replace("\n", "\\n")?.replace("\r", "\\r") ?: "<null>"
 
     fun safeUrl(value: String?): String {
         if (value.isNullOrBlank()) return "<null>"
@@ -221,8 +219,7 @@ object AppFileLogger {
             "yyyy-MM-dd HH:mm:ss.SSS Z",
             Locale.US
         ).format(Date())
-        return timestamp + " [" + kind + "][" + tag + "] " + message + "
-"
+        return timestamp + " [" + kind + "][" + tag + "] " + message + "\n"
     }
 
     private fun ensureLogUriLocked(context: Context): Uri? {
