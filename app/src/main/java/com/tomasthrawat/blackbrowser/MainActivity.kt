@@ -52,8 +52,6 @@ import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
-import androidx.browser.customtabs.CustomTabsClient
-import androidx.browser.customtabs.CustomTabsIntent
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -385,7 +383,6 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         AppFileLogger.trace(this, "ACTIVITY_RESUME", "tab=" + currentTabIndex)
-        googleAuthHandoffInProgress = false
         super.onResume()
         tabs.getOrNull(currentTabIndex)?.webView?.onResume()
         updateDefaultBrowserButtonVisibility()
@@ -538,18 +535,6 @@ class MainActivity : AppCompatActivity() {
                 request: WebResourceRequest?
             ): Boolean {
                 val url = request?.url ?: return false
-
-                if (request.isForMainFrame && isGoogleAuthenticationUrl(url)) {
-                    AppFileLogger.logNow(
-                        this@MainActivity,
-                        "GOOGLE_AUTH",
-                        "handoff Google authentication to Custom Tab url=" +
-                            AppFileLogger.safeUrl(url.toString())
-                    )
-                    if (openGoogleAuthentication(url, view)) {
-                        return true
-                    }
-                }
 
                 if (isGithubArtifactUiDownloadUrl(url)) {
                     AppFileLogger.logNow(
@@ -855,11 +840,6 @@ class MainActivity : AppCompatActivity() {
             }
 
             override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
-                if (view != null && url != null && isGoogleAuthenticationUrl(Uri.parse(url))) {
-                    if (openGoogleAuthentication(Uri.parse(url), view)) {
-                        return
-                    }
-                }
                 AppFileLogger.log(this@MainActivity, "WEBVIEW", "pageStarted url=" + AppFileLogger.safeUrl(url))
                 AppFileLogger.trace(
                     this@MainActivity,
@@ -1185,21 +1165,6 @@ class MainActivity : AppCompatActivity() {
                         request: WebResourceRequest?
                     ): Boolean {
                         val destUrl = request?.url ?: run { popup.destroy(); return true }
-
-                        if (isGoogleAuthenticationUrl(destUrl)) {
-                            AppFileLogger.logNow(
-                                this@MainActivity,
-                                "GOOGLE_AUTH",
-                                "handoff popup Google authentication to Custom Tab url=" +
-                                    AppFileLogger.safeUrl(destUrl.toString())
-                            )
-                            if (openGoogleAuthentication(destUrl, popup)) {
-                                popup.destroy()
-                                return true
-                            }
-                            // No external browser is available, so allow the popup WebView
-                            // to continue the Google sign-in flow internally.
-                        }
 
                         if (isGithubArtifactUiDownloadUrl(destUrl)) {
                             AppFileLogger.logNow(
@@ -2428,144 +2393,6 @@ class MainActivity : AppCompatActivity() {
 
     private fun isLocalRateLimitFallbackUrl(url: String): Boolean {
         return url == "https://blackbrowser.invalid/rate-limit-fallback"
-    }
-
-    private var googleAuthHandoffInProgress = false
-
-    private fun isGoogleAuthenticationUrl(uri: Uri): Boolean {
-        val host = uri.host?.lowercase() ?: return false
-        if (host != "accounts.google.com") return false
-
-        val path = uri.path?.lowercase() ?: ""
-        return path.startsWith("/signin") ||
-            path.startsWith("/servicelogin") ||
-            path.startsWith("/v3/signin") ||
-            path.startsWith("/o/oauth")
-    }
-
-    private fun findExternalCustomTabsPackage(): String? {
-        val serviceIntent = Intent("android.support.customtabs.action.CustomTabsService")
-        val providers = packageManager.queryIntentServices(serviceIntent, 0)
-            .asSequence()
-            .mapNotNull { it.serviceInfo?.packageName }
-            .filter { it != packageName }
-            .distinct()
-            .toList()
-
-        if (providers.isEmpty()) return null
-
-        val defaultViewPackage = packageManager.resolveActivity(
-            Intent(Intent.ACTION_VIEW, Uri.parse("http://")),
-            PackageManager.MATCH_DEFAULT_ONLY
-        )?.activityInfo?.packageName
-            ?.takeUnless { it == packageName }
-
-        val candidates = buildList {
-            if (defaultViewPackage != null) add(defaultViewPackage)
-            addAll(providers)
-        }
-
-        return CustomTabsClient.getPackageName(this, candidates, true)
-            ?.takeUnless { it == packageName }
-    }
-
-    private fun findExternalBrowserPackage(uri: Uri): String? {
-        val viewIntent = Intent(Intent.ACTION_VIEW, uri).apply {
-            addCategory(Intent.CATEGORY_BROWSABLE)
-        }
-
-        val defaultPackage = packageManager.resolveActivity(
-            viewIntent,
-            PackageManager.MATCH_DEFAULT_ONLY
-        )?.activityInfo?.packageName
-            ?.takeUnless { it == packageName }
-
-        if (defaultPackage != null) return defaultPackage
-
-        return packageManager.queryIntentActivities(viewIntent, 0)
-            .asSequence()
-            .mapNotNull { it.activityInfo?.packageName }
-            .distinct()
-            .firstOrNull { it != packageName }
-    }
-
-    private fun openGoogleAuthentication(uri: Uri, webView: WebView?): Boolean {
-        if (!isGoogleAuthenticationUrl(uri)) return false
-        if (googleAuthHandoffInProgress) {
-            webView?.stopLoading()
-            return true
-        }
-
-        webView?.stopLoading()
-
-        val customTabsPackage = findExternalCustomTabsPackage()
-        val browserPackage = customTabsPackage ?: findExternalBrowserPackage(uri)
-        AppFileLogger.trace(
-            this,
-            "GOOGLE_AUTH_PROVIDER",
-            "customTabs=" + AppFileLogger.safeString(customTabsPackage) +
-                " browser=" + AppFileLogger.safeString(browserPackage)
-        )
-
-        if (browserPackage == null) {
-            // BlackBrowser may be the only browser installed on the device. In that case,
-            // keep Google authentication in this WebView instead of consuming the navigation
-            // and showing a dead-end "no external browser" message. This also preserves the
-            // session/cookies inside the same browser when the user has no external provider.
-            AppFileLogger.trace(
-                this,
-                "GOOGLE_AUTH",
-                "no external browser/custom tab provider; continuing authentication in WebView"
-            )
-            return false
-        }
-
-        googleAuthHandoffInProgress = true
-        return try {
-            if (customTabsPackage != null) {
-                val customTabsIntent = CustomTabsIntent.Builder()
-                    .setShowTitle(true)
-                    .build()
-                customTabsIntent.intent.setPackage(customTabsPackage)
-                customTabsIntent.launchUrl(this, uri)
-            } else {
-                startActivity(
-                    Intent(Intent.ACTION_VIEW, uri).apply {
-                        addCategory(Intent.CATEGORY_BROWSABLE)
-                        setPackage(browserPackage)
-                    }
-                )
-            }
-            true
-        } catch (e: ActivityNotFoundException) {
-            googleAuthHandoffInProgress = false
-            Toast.makeText(
-                this,
-                "No external browser is available for Google sign-in.",
-                Toast.LENGTH_LONG
-            ).show()
-            AppFileLogger.logExceptionNow(
-                this,
-                "GOOGLE_AUTH",
-                "external browser launch failed",
-                e
-            )
-            true
-        } catch (e: Exception) {
-            googleAuthHandoffInProgress = false
-            Toast.makeText(
-                this,
-                "Google sign-in could not be opened externally.",
-                Toast.LENGTH_LONG
-            ).show()
-            AppFileLogger.logExceptionNow(
-                this,
-                "GOOGLE_AUTH",
-                "external authentication launch failed",
-                e
-            )
-            true
-        }
     }
 
     private fun isGoogleSettingsUrl(uri: Uri): Boolean {
