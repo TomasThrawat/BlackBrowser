@@ -1193,9 +1193,12 @@ class MainActivity : AppCompatActivity() {
                                 "handoff popup Google authentication to Custom Tab url=" +
                                     AppFileLogger.safeUrl(destUrl.toString())
                             )
-                            popup.destroy()
-                            openGoogleAuthentication(destUrl, null)
-                            return true
+                            if (openGoogleAuthentication(destUrl, popup)) {
+                                popup.destroy()
+                                return true
+                            }
+                            // No external browser is available, so allow the popup WebView
+                            // to continue the Google sign-in flow internally.
                         }
 
                         if (isGithubArtifactUiDownloadUrl(destUrl)) {
@@ -2505,12 +2508,16 @@ class MainActivity : AppCompatActivity() {
         )
 
         if (browserPackage == null) {
-            Toast.makeText(
+            // BlackBrowser may be the only browser installed on the device. In that case,
+            // keep Google authentication in this WebView instead of consuming the navigation
+            // and showing a dead-end "no external browser" message. This also preserves the
+            // session/cookies inside the same browser when the user has no external provider.
+            AppFileLogger.trace(
                 this,
-                "No external browser is installed for Google sign-in.",
-                Toast.LENGTH_LONG
-            ).show()
-            return true
+                "GOOGLE_AUTH",
+                "no external browser/custom tab provider; continuing authentication in WebView"
+            )
+            return false
         }
 
         googleAuthHandoffInProgress = true
