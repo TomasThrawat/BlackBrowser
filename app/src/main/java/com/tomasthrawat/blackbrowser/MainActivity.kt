@@ -661,10 +661,12 @@ class MainActivity : AppCompatActivity() {
                 // document and make a submitted Google email appear to have been lost.
                 if (request.isForMainFrame && hostNeedsUaSpoof(url.host)) {
                     val destinationUa = computeUserAgent(url.host)
-                    if (view?.settings?.userAgentString != destinationUa) {
-                        view?.settings?.userAgentString = destinationUa
-                        applyUserAgentMetadata(view)
-                        applyUserAgentDataOverride(view)
+                    view?.let { webView ->
+                        if (webView.settings.userAgentString != destinationUa) {
+                            webView.settings.userAgentString = destinationUa
+                            applyUserAgentMetadata(webView)
+                            applyUserAgentDataOverride(webView)
+                        }
                     }
                 }
 
