@@ -467,6 +467,12 @@ class MainActivity : AppCompatActivity() {
         wv.settings.domStorageEnabled = true
         wv.settings.loadWithOverviewMode = true
         wv.settings.useWideViewPort = true
+        wv.settings.mediaPlaybackRequiresUserGesture = false
+        wv.settings.cacheMode = if (isIncognito) {
+            WebSettings.LOAD_NO_CACHE
+        } else {
+            WebSettings.LOAD_DEFAULT
+        }
         // Pinch-to-zoom with two fingers, via WebView's own built-in zoom handling.
         // displayZoomControls=false hides the on-screen +/- overlay Android draws by
         // default, so only the finger gesture itself is exposed to the user.
@@ -489,12 +495,6 @@ class MainActivity : AppCompatActivity() {
         cookieManager.setAcceptCookie(!isIncognito)
         cookieManager.setAcceptThirdPartyCookies(wv, !isIncognito)
 
-        if (isIncognito) {
-            // Private tab: no disk/RAM cache. Note this WebView engine shares one
-            // cookie/session store across the whole app process, so this gives
-            // "no history + no cache" rather than full multi-profile isolation.
-            wv.settings.cacheMode = WebSettings.LOAD_NO_CACHE
-        }
         // Needed so onCreateWindow below actually gets called for window.open() (sign-in
         // popups, ad pop-unders) instead of the request being silently dropped.
         wv.settings.setSupportMultipleWindows(true)
@@ -609,11 +609,14 @@ class MainActivity : AppCompatActivity() {
                 // isTrustedPopupDestination(); this top-level navigation path had no such
                 // exemption, so a false-positive match on the ~321k-domain merged blocklist
                 // during a real sign-in redirect looked like "the page never comes back".
+                val isGoogleProtectedDestination = request.isForMainFrame &&
+                    isGoogleProtectedPage(url.toString())
                 val isTrustedTopLevelNav = request.isForMainFrame &&
                     AdBlocker.isTrustedPopupDestination(url, null)
                 if (AdBlockPrefs.isEnabled(this@MainActivity) &&
                     AdBlocker.shouldBlock(url) &&
-                    !isTrustedTopLevelNav
+                    !isTrustedTopLevelNav &&
+                    !isGoogleProtectedDestination
                 ) {
                     return true
                 }
@@ -652,10 +655,21 @@ class MainActivity : AppCompatActivity() {
                 // the app that asked for the sign-in. Real browsers (Chrome included) check
                 // for exactly this before rendering; do the same.
 
+                // BB_GOOGLE_WEBVIEW_FIX_V1
+                // Set the Google-compatible UA before the navigation starts, never after
+                // Chromium has begun the request. Changing it mid-load can recreate the
+                // document and make a submitted Google email appear to have been lost.
+                if (request.isForMainFrame && hostNeedsUaSpoof(url.host)) {
+                    val destinationUa = computeUserAgent(url.host)
+                    if (view?.settings?.userAgentString != destinationUa) {
+                        view?.settings?.userAgentString = destinationUa
+                        applyUserAgentMetadata(view)
+                        applyUserAgentDataOverride(view)
+                    }
+                }
+
                 // BB_WEBVIEW_SESSION_FIX_V1
-                // Never mutate User-Agent or cacheMode during a link/redirect navigation.
-                // Android WebView can reload the current document when its User-Agent changes
-                // during a load. A challenge provider can also see that as a changed client.
+                // Never mutate cacheMode during a link/redirect navigation.
                 // Let Google SafeSearch/settings submissions, including POST forms, proceed
                 // exactly as WebView issued them so their request body and session state survive.
                 AppFileLogger.trace(
@@ -899,7 +913,9 @@ class MainActivity : AppCompatActivity() {
                 // are persisted before a WebView/activity restart can race them.
                 if (url != null) {
                     val finishedUri = runCatching { Uri.parse(url) }.getOrNull()
-                    if (finishedUri != null && isGoogleSettingsUrl(finishedUri)) {
+                    if (finishedUri != null &&
+                        (isGoogleSettingsUrl(finishedUri) || isGoogleProtectedPage(finishedUri))
+                    ) {
                         runCatching { CookieManager.getInstance().flush() }
                     }
                 }
@@ -1005,6 +1021,14 @@ class MainActivity : AppCompatActivity() {
 
             private fun injectCosmeticCss(view: WebView?) {
                 if (view == null) return
+                if (isGoogleProtectedPage(view.url)) {
+                    AppFileLogger.trace(
+                        this@MainActivity,
+                        "WEBVIEW_CSS_SKIP",
+                        "protected Google page url=" + AppFileLogger.safeUrl(view.url)
+                    )
+                    return
+                }
                 val css = org.json.JSONObject.quote(AdBlocker.cosmeticHideCss())
                 val script = "(function(){try{" +
                     "var parent=document.head||document.documentElement;" +
@@ -1044,14 +1068,22 @@ class MainActivity : AppCompatActivity() {
                 // trusted as a sign-in/window.open destination must not automatically bypass the
                 // network blocklist for all of its images/scripts/XHRs.
                 val adBlockOn = AdBlockPrefs.isEnabled(this@MainActivity)
-                val blockReason = if (adBlockOn) url?.let { AdBlocker.blockingReason(it) } else null
+                val googleProtectedPage = isGoogleProtectedPage(view?.url)
+                val googleEssentialResource = googleProtectedPage &&
+                    isGoogleInfrastructureHost(url?.host)
+                val blockReason = if (adBlockOn && !googleEssentialResource) {
+                    url?.let { AdBlocker.blockingReason(it) }
+                } else {
+                    null
+                }
                 val isCloudflareChallenge = url != null && AdBlocker.isCloudflareChallenge(url)
                 val isGoogleCaptcha = url != null && isGoogleCaptchaResource(url)
                 val willBlock = url != null &&
                     adBlockOn &&
                     blockReason != null &&
                     !isCloudflareChallenge &&
-                    !isGoogleCaptcha
+                    !isGoogleCaptcha &&
+                    !googleEssentialResource
 
                 // shouldInterceptRequest is on the WebView networking hot path. Logging every
                 // image/script/XHR/font request creates substantial file I/O on busy pages.
@@ -2326,6 +2358,47 @@ class MainActivity : AppCompatActivity() {
     private val uaSpoofOriginRules: Set<String> =
         uaSpoofHosts.flatMap { listOf("https://$it", "https://*.$it") }.toSet()
 
+    // Google explicitly restricts account sign-in in embedded WebViews. These scoped
+    // compatibility rules do not create an external-browser handoff; they only keep
+    // Google account/Gmail pages internally consistent and prevent BlackBrowser's
+    // ad/cosmetic filters from breaking their required first-party resources.
+    private val googleProtectedHosts: Set<String> = setOf(
+        "accounts.google.com",
+        "mail.google.com",
+        "gmail.com",
+        "www.gmail.com"
+    )
+
+    private val googleInfrastructureSuffixes: Set<String> = setOf(
+        "google.com",
+        "googleapis.com",
+        "gstatic.com",
+        "googleusercontent.com",
+        "googlevideo.com"
+    )
+
+    private fun isGoogleProtectedHost(host: String?): Boolean {
+        val normalized = host?.lowercase()?.removeSuffix(".") ?: return false
+        return googleProtectedHosts.any {
+            normalized == it || normalized.endsWith(".$it")
+        }
+    }
+
+    private fun isGoogleProtectedPage(url: String?): Boolean {
+        val uri = url?.let { runCatching { Uri.parse(it) }.getOrNull() } ?: return false
+        return isGoogleProtectedHost(uri.host)
+    }
+
+    private fun isGoogleProtectedPage(uri: Uri): Boolean =
+        isGoogleProtectedHost(uri.host)
+
+    private fun isGoogleInfrastructureHost(host: String?): Boolean {
+        val normalized = host?.lowercase()?.removeSuffix(".") ?: return false
+        return googleInfrastructureSuffixes.any {
+            normalized == it || normalized.endsWith(".$it")
+        }
+    }
+
     private fun hostNeedsUaSpoof(host: String?): Boolean =
         host != null && uaSpoofHosts.any { host == it || host.endsWith(".$it") }
 
@@ -2412,6 +2485,17 @@ class MainActivity : AppCompatActivity() {
         // intentional User-Agent change remains the user's explicit Desktop Site toggle.
         if (url == this.url) return
         if (inFlightAppNavigationUrls[this] == url) return
+
+        val destinationHost = runCatching { Uri.parse(url).host }.getOrNull()
+        if (hostNeedsUaSpoof(destinationHost)) {
+            val destinationUa = computeUserAgent(destinationHost)
+            if (settings.userAgentString != destinationUa) {
+                settings.userAgentString = destinationUa
+                applyUserAgentMetadata(this)
+                applyUserAgentDataOverride(this)
+            }
+        }
+
         inFlightAppNavigationUrls[this] = url
 
         AppFileLogger.trace(
